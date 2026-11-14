@@ -222,6 +222,25 @@ in a `-shm` file mapped with `mmap(MAP_SHARED)` — unless the connection is in
 No UDP (no calls), no listening sockets. Name resolution is needed only for OpenRouter
 (and proxies given by name); Telegram itself is reached by address.
 
+### 1.8 What moves, what changes, what is rewritten
+
+| Class | Files | Lines | Share of Python |
+|---|---|---:|---:|
+| **Moves unchanged**: `td/client.py`, `td/auth.py`, `store/` except the two HTML emitters, `services/` except `embeddings`, `updates`, `search*`; `accounts`, `config`, `prefs`, `cli` (with the empty `__init__`s) | 32 | 7 377 | 37 % |
+| **Small changes** (an import or an emitter): `vault.py` (AES-GCM, keyring), `services/search.py` + `search_index.py` (numpy optional), `store/richtext.py` + `store/markdown.py` (spans instead of Qt HTML) | 5 | 1 505 | 8 % |
+| **Mechanically adapted**: `models/*` (15) and the logic controllers in `ui/` (accounts, ai_controller, auth_controller, chat_actions, devices, folders, group_admin, lock, privacy, proxy, shell) — bodies kept, `Signal`/`Slot`/`Property`/row notifications replaced by an event bus and list deltas | 26 | 7 955 | 40 % |
+| **Rewritten or dropped**: `td/tdjson.py` (→ `_tdjson`), `embeddings.py`, `services/updates.py`; `app.py`, `selftest.py`, `devbundle.py`; image providers, media, notifications, updates UI in `ui/` | 15 | 3 131 | 16 % |
+| QML | 46 | 11 849 | — (all rewritten as the native front end) |
+
+So **45 % of the Python moves as is or nearly** (8 882 lines), **40 % moves with mechanical
+edits** that keep its logic, and **16 %** is replaced; all of the 11 849 QML lines are
+rewritten. Counting QML, 28 % of the code moves unchanged, 25 % is adapted and 47 % is
+rewritten — and nearly all of that rewritten part is presentation.
+
+The adapted 40 % is best done **in tgclient itself**, by the architect: split each model
+into a Qt-free view-model (in a new `tgclient/vm/`) and a thin Qt shim, so the desktop client
+and `tgd` share one copy of the logic instead of forking it (plan, part 3).
+
 ---
 
 ## 2. What the UI does — the list the native front end must cover
@@ -395,7 +414,7 @@ will need" in `TASK-30-report.md`: shared file `mmap` and `madvise`, more mappin
 |---|---|---|---|
 | C++17 compiler and library | **present**: `zc++` (host clang, LLVM 20.1.8 libc++/libc++abi/libunwind, static), exceptions, RTTI, iostreams, `std::thread`; C locale only, no tzdb | TASK-30, ADR-0360…0367 | TDLib needs C++14/17 only; fine |
 | CMake | **present**: toolchain file `ports/cmake/zoraya.cmake`, used out of tree with `-DCMAKE_TOOLCHAIN_FILE=` pointing into a built Zoraya checkout | TASK-30-report | it searches `build/sysroot` only; OpenSSL/zlib/SQLite are in `build/ports/deps` → pass `OPENSSL_ROOT_DIR`, `ZLIB_ROOT` ourselves |
-| Host tools for code generation | host side (TDLib generates its TL sources with host binaries) | TDLib `prepare_cross_compiling` target | standard TDLib cross build: run `prepare_cross_compiling` with the host compiler first, then the target build; needs `gperf`, `php` not needed |
+| Host tools for code generation | host side (TDLib generates its TL sources with host binaries) | TDLib `prepare_cross_compiling` target | standard TDLib cross build: run `prepare_cross_compiling` with the host compiler first, then the target build; needs `gperf` and `cmake` on the host |
 | OpenSSL | **present**: 3.5.9 static, threads, `no-sock no-legacy no-asm`, roots in `/system/tls/roots` | docs/dependencies.md, ports/Makefile | TDLib uses OpenSSL for crypto (AES-IGE/CTR, SHA, RSA, DH) and memory-BIO TLS — `no-sock` does not matter; `no-asm` makes MTProto crypto slower but adequate |
 | zlib | **present**: 1.3.1 | ports | fine |
 | Threads | **present**: pthreads, 128 threads per process, 1 000 system-wide | design.md | TDLib per account: one scheduler + 3 extra threads (`Client.cpp`, `ADDITIONAL_THREAD_COUNT = 3`); with Python's few threads ≈ 10 — fine. Stacks are committed in full (no demand paging): keep thread stacks modest |
