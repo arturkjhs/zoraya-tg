@@ -1,0 +1,17 @@
+--- a/td/telegram/net/ConnectionCreator.cpp
++++ b/td/telegram/net/ConnectionCreator.cpp
+@@ -1265,7 +1265,14 @@
+             ip_address.init_ipv4_port(ip_address_string, port).ensure();
+             break;
+           case HostType::IPv6:
++#if TD_ZORAYA
++            // Zoraya is IPv4 only and its inet_pton has no AF_INET6: leave the built-in IPv6 addresses out.
++            if (ip_address.init_ipv6_port(ip_address_string, port).is_error()) {
++              continue;
++            }
++#else
+             ip_address.init_ipv6_port(ip_address_string, port).ensure();
++#endif
+             break;
+           case HostType::Url:
+             ip_address.init_host_port(ip_address_string, port).ensure();

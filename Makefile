@@ -12,6 +12,15 @@
 #   make smoke    the smoke test inside Zoraya under HVF, the image through
 #                 Zoraya's EXTRA_ROOT; the transcript in build/logs/smoke.log
 #
+# tgd (docs/tasks/TG-03-tgd.md, docs/tgd-report.md):
+#   make wheels   the pure-Python packages of ports/wheels.lock (network)
+#   make tgd      out/tgd: bin/tgd (python3 with tgd's main) and usr/lib/tgd (tgd, tgclient's Qt-free
+#                 packages from TGCLIENT=<dir>, the wheels, the Zoraya shim)
+#   make host     tgd on the host: libtdjson from the same TDLib (build/host/td-lib),
+#                 a venv with cryptography; run out/host/bin/tgd
+#   make test-tgd-host   the protocol test on the host (no account)
+#   make smoke-tgd       tgd inside Zoraya under HVF (no account), build/logs/smoke-tgd.log
+#
 # ZORAYA is the Zoraya checkout used as toolchain and image, read-only but for
 # its build outputs; it must have run `make fetch-ports` and
 # `make -f ports/Makefile cxx zlib openssl python`.
@@ -22,6 +31,8 @@ OUT := $(TG)/out
 LOGS := $(B)/logs
 JOBS ?= 2
 LOCK := ports/sources.lock
+TGD_STAMP := $(OUT)/tgd/.stamp
+TGD_LIB := $(OUT)/tgd/usr/lib/tgd
 
 lock_field = $(shell awk '$$1 == "$(1)" { print $$$(2) }' $(LOCK))
 TD_FILE := $(call lock_field,td,4)
@@ -41,7 +52,7 @@ HOST_OPENSSL ?= $(shell brew --prefix openssl@3 2>/dev/null)
 
 logged = $(1) > $(LOGS)/$(2).log 2>&1 || { echo "$(2) failed: $(LOGS)/$(2).log"; tail -40 $(LOGS)/$(2).log; exit 1; }
 
-.PHONY: fetch td python root smoke clean
+.PHONY: fetch td python root smoke clean wheels tgd host test-tgd-host smoke-tgd
 .SUFFIXES:
 
 fetch: $(B)/src/$(TD_FILE)
@@ -114,9 +125,11 @@ python: $(PY_STAMP)
 $(PY_ROOT)/.stamp:
 	@mkdir -p $(LOGS)
 	$(MAKE) -C $(ZORAYA) -f ports/Makefile PYTHON_BUILD=$(PY_BUILD) PYTHON_STAGE=$(PY_STAGE) PYTHON_ROOT=$(PY_ROOT) LOGS=$(LOGS) $(PY_ROOT)/.stamp
-$(PY_STAMP): $(PY_ROOT)/.stamp $(TD_STAMP) $(OUT)/lib/libtdshim.a modules/_tdjson.c
-	printf '%s\n' '# zoraya-tg: TDLib JSON client, built in (Makefile, make python)' '*static*' \
+$(PY_STAMP): $(PY_ROOT)/.stamp $(TD_STAMP) $(OUT)/lib/libtdshim.a modules/_tdjson.c modules/_aead.c
+	@# _aead: AES-GCM over the libcrypto python3 already links (_ssl, _hashlib), for vault.py.
+	printf '%s\n' '# zoraya-tg: TDLib JSON client and AES-GCM, built in (Makefile, make python)' '*static*' \
 	  '_tdjson $(TG)/modules/_tdjson.c -I$(OUT)/include -DTDJSON_STATIC_DEFINE $(addprefix $(OUT)/lib/lib,$(addsuffix .a,$(TD_LIBS) tdshim))' \
+	  '_aead $(TG)/modules/_aead.c -I$(ZORAYA)/build/ports/deps/include' \
 	  > $(PY_BUILD)/Modules/Setup.local
 	@# makesetup keeps an absolute source as it is and puts its object under Modules/ + that path.
 	mkdir -p $(PY_BUILD)/Modules$(TG)/modules
@@ -128,15 +141,18 @@ $(PY_STAMP): $(PY_ROOT)/.stamp $(TD_STAMP) $(OUT)/lib/libtdshim.a modules/_tdjso
 	cp $(PY_BUILD)/python$$(sed -n 's/^BUILDEXE=[[:space:]]*//p' $(PY_BUILD)/Makefile) $(B)/python3-tdjson
 	$(ZORAYA)/target/debug/zoraya-elf-check $(B)/python3-tdjson
 	@grep -q '_tdjson' $(PY_BUILD)/Modules/config.c || { echo "python: _tdjson is not in Modules/config.c"; exit 1; }
+	@grep -q '_aead' $(PY_BUILD)/Modules/config.c || { echo "python: _aead is not in Modules/config.c"; exit 1; }
 	@touch $@
 
 # ---------------------------------------------------------------- the image part
 
 root: $(OUT)/root/.stamp
-$(OUT)/root/.stamp: $(PY_STAMP) $(wildcard tests/*.py)
+$(OUT)/root/.stamp: $(PY_STAMP) $(TGD_STAMP) $(wildcard tests/*.py)
 	rm -rf $(OUT)/root && mkdir -p $(OUT)/root/bin $(OUT)/root/usr/lib $(OUT)/root/home
 	cp $(B)/python3-tdjson $(OUT)/root/bin/python3
 	cp -R $(PY_ROOT)/usr/lib/. $(OUT)/root/usr/lib/
+	cp -R $(OUT)/tgd/. $(OUT)/root/
+	rm -f $(OUT)/root/.stamp
 	cp tests/*.py $(OUT)/root/home/
 	@echo "root: python3 $$(du -k $(OUT)/root/bin/python3 | cut -f1) KiB; the part $$(du -sk $(OUT)/root | cut -f1) KiB"
 	@touch $@
@@ -156,6 +172,95 @@ smoke: $(OUT)/root/.stamp tests/smoke.script
 	cd $(ZORAYA) && target/debug/zoraya-test-runner --timeout $(SMOKE_TIMEOUT) --script $(TG)/tests/smoke.script --label tg-smoke-hvf -- \
 	  tools/run-qemu.sh --test --keys --mem 512M --disk $(SMOKE_DISK) --accel hvf build/zoraya-kernel.elf; rc=$$?; \
 	  cp target/test-logs/tg-smoke-hvf.log $(LOGS)/smoke.log; exit $$rc
+
+# ---------------------------------------------------------------- tgd
+
+# TGCLIENT is a checkout of tgclient (code only); its Qt-free packages are packed into
+# out/tgd, never into this repository. Left out: models/, ui/, app.py, selftest.py,
+# devbundle.py (Qt), and the services that need numpy or self-update (embeddings, search,
+# search_index, updates).
+TGCLIENT ?= $(HOME)/workspace/tgclient
+TGC_SRC := $(TGCLIENT)/src/tgclient
+TGC_TOP := __init__.py accounts.py cli.py config.py prefs.py vault.py
+TGC_DIRS := td store services
+TGC_LEAVE := services/embeddings.py services/search.py services/search_index.py services/updates.py
+WHEELS := $(B)/src/wheels
+WHEEL_LOCK := ports/wheels.lock
+
+wheels: $(WHEELS)/.stamp
+$(WHEELS)/.stamp: $(WHEEL_LOCK)
+	@mkdir -p $(WHEELS)
+	@grep -v '^#' $(WHEEL_LOCK) | while read name version sha url; do \
+	  f=$(WHEELS)/$$(basename $$url); \
+	  [ -f $$f ] || { echo "wheels: $$name $$version"; curl -sSfL -o $$f.part $$url && mv $$f.part $$f; } || exit 1; \
+	  echo "$$sha  $$f" | shasum -a 256 -c -s || { echo "wheels: $$f is not the locked SHA-256"; exit 1; }; \
+	done
+	@touch $@
+
+tgd: $(TGD_STAMP)
+# /bin/tgd: python3's objects with tgd's main (tgd/tgd_main.c, ports/tgd-link.mk).
+$(B)/tgd.elf: $(PY_STAMP) tgd/tgd_main.c ports/tgd-link.mk
+	@$(call logged,PATH=$(ZTOOLS):$$PATH $(MAKE) -C $(PY_BUILD) -f Makefile -f $(TG)/ports/tgd-link.mk LINKCC=$(ZCXX) TGD_MAIN=$(TG)/tgd/tgd_main.c tgd-elf,tgd-elf)
+	cp $(PY_BUILD)/tgd.elf $@
+	$(ZORAYA)/target/debug/zoraya-elf-check $@
+$(TGD_STAMP): $(B)/tgd.elf $(WHEELS)/.stamp $(shell find tgd -type f -not -name '*.pyc' -not -name tgd_main.c) $(shell find $(TGC_SRC) -name '*.py' 2>/dev/null)
+	@[ -f $(TGC_SRC)/td/client.py ] || { echo "tgd: no tgclient checkout at TGCLIENT=$(TGCLIENT)"; exit 1; }
+	rm -rf $(OUT)/tgd && mkdir -p $(OUT)/tgd/bin $(TGD_LIB)/tgclient $(TGD_LIB)/site
+	cp $(B)/tgd.elf $(OUT)/tgd/bin/tgd
+	cp -R tgd/tgd tgd/zoraya tgd/tgd.py $(TGD_LIB)/
+	cd $(TGC_SRC) && cp $(TGC_TOP) $(TGD_LIB)/tgclient/ && \
+	  find $(TGC_DIRS) -type f \( -name '*.py' -o -name '*.json' \) | while read f; do \
+	    mkdir -p $(TGD_LIB)/tgclient/$$(dirname $$f) && cp $$f $(TGD_LIB)/tgclient/$$f; done
+	cd $(TGD_LIB)/tgclient && rm -f $(TGC_LEAVE)
+	@# The commit of tgclient packed, without anything of its working tree's state.
+	git -C $(TGCLIENT) rev-parse HEAD > $(TGD_LIB)/tgclient/COMMIT
+	@grep -v '^#' $(WHEEL_LOCK) | while read name version sha url; do \
+	  python3 -I -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' $(WHEELS)/$$(basename $$url) $(TGD_LIB)/site || exit 1; done
+	find $(OUT)/tgd -name '__pycache__' -prune -exec rm -rf {} +
+	@if grep -rln -e 'PySide6' -e 'import numpy' $(TGD_LIB)/tgclient; then echo "tgd: Qt or numpy in the packed tgclient"; exit 1; fi
+	@echo "tgd: /bin/tgd $$(du -k $(OUT)/tgd/bin/tgd | cut -f1) KiB; usr/lib/tgd $$(find $(TGD_LIB) -name '*.py' | wc -l | tr -d ' ') Python files, $$(du -sk $(TGD_LIB) | cut -f1) KiB; tgclient $$(cut -c1-8 $(TGD_LIB)/tgclient/COMMIT)"
+	@touch $@
+
+# The host: libtdjson from the same patched TDLib tree (the Zoraya patches change nothing
+# outside TD_ZORAYA/__zoraya__), built by the host's clang; Homebrew's python with a venv
+# that has only cryptography (tgclient's pin; the pure-Python packages come from out/tgd).
+HOST_PY ?= /opt/homebrew/bin/python3.14
+HOST_TD := $(B)/host/td-lib
+HOST_OUT := $(OUT)/host
+HOST_VENV := $(B)/host/venv
+$(HOST_OUT)/lib/.stamp: $(TD_SRC_STAMP)
+	rm -rf $(HOST_TD) && mkdir -p $(HOST_TD) $(HOST_OUT)/lib $(LOGS)
+	@$(call logged,$(CMAKE) -S $(TD_SRC) -B $(HOST_TD) -DCMAKE_BUILD_TYPE=Release -DOPENSSL_ROOT_DIR=$(HOST_OPENSSL),host-td-configure)
+	@date +%s > $(LOGS)/host-td.start
+	@$(call logged,$(CMAKE) --build $(HOST_TD) --target tdjson -j$(JOBS),host-td-build)
+	@echo "host td: built in $$(( $$(date +%s) - $$(cat $(LOGS)/host-td.start) )) s at -j$(JOBS)"
+	cp $$(find $(HOST_TD) -maxdepth 1 -name 'libtdjson.*.dylib' -type f | head -1) $(HOST_OUT)/lib/libtdjson.dylib
+	@touch $@
+$(HOST_VENV)/.stamp: ports/host-requirements.txt
+	rm -rf $(HOST_VENV) && $(HOST_PY) -m venv $(HOST_VENV)
+	$(HOST_VENV)/bin/pip install -q --require-hashes --only-binary :all: -r ports/host-requirements.txt
+	@touch $@
+host: $(HOST_OUT)/lib/.stamp $(HOST_VENV)/.stamp $(TGD_STAMP)
+	rm -rf $(HOST_OUT)/bin $(HOST_OUT)/usr && mkdir -p $(HOST_OUT)/bin $(HOST_OUT)/usr/lib
+	ln -s $(TGD_LIB) $(HOST_OUT)/usr/lib/tgd
+	@# The launcher with the venv's python, and TDJSON_PATH to the host library.
+	{ echo '#!/bin/sh'; echo 'TDJSON_PATH="$${TDJSON_PATH:-$(HOST_OUT)/lib/libtdjson.dylib}" exec $(HOST_VENV)/bin/python -I $(HOST_OUT)/usr/lib/tgd/tgd.py "$$@"'; } > $(HOST_OUT)/bin/tgd
+	chmod 755 $(HOST_OUT)/bin/tgd
+	@echo "host: run $(HOST_OUT)/bin/tgd --test-dc"
+
+test-tgd-host: host
+	$(HOST_VENV)/bin/python -I tests/tgd_protocol.py $(HOST_OUT)/bin/tgd
+
+# tgd inside Zoraya (no account): tests/smoke-tgd.script, on the image of make root.
+SMOKE_TGD_DISK := $(B)/smoke/tgd-disk.img
+smoke-tgd: $(OUT)/root/.stamp tests/smoke-tgd.script
+	@mkdir -p $(B)/smoke $(LOGS)
+	cd $(ZORAYA) && $(MAKE) build tools-storage && cargo build -q -p zoraya-test-runner
+	rm -f $(SMOKE_TGD_DISK) $(SMOKE_TGD_DISK).key
+	cd $(ZORAYA) && EXTRA_ROOT=$(OUT)/root DISK_SIZE=384M tools/run-disk.sh $(SMOKE_TGD_DISK)
+	cd $(ZORAYA) && target/debug/zoraya-test-runner --timeout $(SMOKE_TIMEOUT) --script $(TG)/tests/smoke-tgd.script --label tg-smoke-tgd -- \
+	  tools/run-qemu.sh --test --keys --mem 512M --disk $(SMOKE_TGD_DISK) --accel hvf build/zoraya-kernel.elf; rc=$$?; \
+	  cp target/test-logs/tg-smoke-tgd.log $(LOGS)/smoke-tgd.log; exit $$rc
 
 clean:
 	rm -rf $(B)/work $(B)/host $(B)/td-zoraya $(B)/python-* $(B)/rootfs-python $(B)/obj $(B)/smoke $(OUT)

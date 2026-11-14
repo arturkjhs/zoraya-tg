@@ -1,0 +1,39 @@
+--- a/sqlite/sqlite/sqlite3.c
++++ b/sqlite/sqlite/sqlite3.c
+@@ -44063,7 +44063,19 @@
+   */
+   memset(zBuf, 0, nBuf);
+   randomnessPid = osGetpid(0);  
+-#if !defined(SQLITE_TEST) && !defined(SQLITE_OMIT_RANDOMNESS)
++#if !defined(SQLITE_TEST) && !defined(SQLITE_OMIT_RANDOMNESS) && defined(__zoraya__)
++  /* Zoraya: a program is not given /dev; the system's random source is getrandom. */
++  {
++    extern long getrandom(void *, unsigned long, unsigned int);
++    if( getrandom(zBuf, (unsigned long)nBuf, 0)!=(long)nBuf ){
++      time_t t;
++      time(&t);
++      memcpy(zBuf, &t, sizeof(t));
++      memcpy(&zBuf[sizeof(t)], &randomnessPid, sizeof(randomnessPid));
++      nBuf = sizeof(t) + sizeof(randomnessPid);
++    }
++  }
++#elif !defined(SQLITE_TEST) && !defined(SQLITE_OMIT_RANDOMNESS)
+   {
+     int fd, got;
+     fd = robust_open("/dev/urandom", O_RDONLY, 0);
+@@ -45474,7 +45486,15 @@
+ 
+   /* Register all VFSes defined in the aVfs[] array */
+   for(i=0; i<(sizeof(aVfs)/sizeof(tdsqlite3_vfs)); i++){
++#if defined(__zoraya__)
++    /* Zoraya: no shared mapping of regular files, so no -shm file for WAL.
++    ** "unix-excl" holds one process-wide write lock on the database (Zoraya's
++    ** record locks are within a process) and keeps the WAL index in heap
++    ** memory shared by the process's connections. */
++    tdsqlite3_vfs_register(&aVfs[i], strcmp(aVfs[i].zName, "unix-excl")==0);
++#else
+     tdsqlite3_vfs_register(&aVfs[i], i==0);
++#endif
+   }
+   unixBigLock = tdsqlite3MutexAlloc(SQLITE_MUTEX_STATIC_VFS1);
+   return SQLITE_OK; 

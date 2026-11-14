@@ -1,0 +1,66 @@
+# TG-03 smoke test (make smoke-tgd): tgd inside Zoraya under HVF, with no account and no
+# traffic to Telegram: the start, the line protocol, a clean quit, the refusal without +net,
+# TDLib's database opened, written and reopened (a placeholder api id, no +net), and the
+# credentials kept across a restart. Run on the volume of make root.
+! panicked
+! first process ended
+! Traceback
+< Type help to begin, or help tour.
+< \r\n~>
+> mkdir tg\r
+< \r\n~>
+> tgd --version\r
+< tgd 0.1.0
+< \r\n~>
+# What the line of the report grants (the DC ranges, OpenRouter, ~/tg).
+> grants +net 149.154.160.0/20:443 +net openrouter.ai:443 +w ~/tg tgd\r
+< \r\n~>
+# The refusal: no +net, so connecting to a data centre is refused (EACCES), and tgd says
+# which line starts it.
+> tgd --json\r
+< "ev": "refused", "reason": "network"
+< \r\n~>
+> status\r
+< exit status 3
+< \r\n~>
+# TDLib's database, twice: opened, written, closed; opened again.
+> +w ~/tg python3 tdjson_db.py /home/tg/dbcheck\r
+< run first
+< state authorizationStateWaitPhoneNumber
+< db done
+< \r\n~>
+> +w ~/tg python3 tdjson_db.py /home/tg/dbcheck\r
+< run again
+< state authorizationStateWaitPhoneNumber
+< db done
+< \r\n~>
+# The protocol, without network (--no-probe): hello, a reply, an error reply, credentials
+# (placeholders) that start TDLib to wait_phone, a clean quit.
+> +w ~/tg tgd --json --no-probe --test-dc\r
+< "ev": "hello"
+< "state": "need_credentials"
+> {"op": "version", "id": 1}\r
+< "re": 1, "ok": true
+> {"op": "nonsense", "id": 2}\r
+< "re": 2, "ok": false
+> {"op": "auth.credentials", "id": 3, "api_id": 1, "api_hash": "00000000000000000000000000000000"}\r
+< "re": 3, "ok": true
+< "state": "wait_phone"
+> {"op": "quit", "id": 4}\r
+< "ev": "bye"
+< \r\n~>
+> status\r
+< succeeded (exit status 0)
+< \r\n~>
+# Started again: the credentials and the database are found, TDLib asks for the phone.
+> +w ~/tg tgd --json --no-probe --test-dc\r
+< "ev": "hello"
+< "state": "wait_phone"
+> {"op": "quit", "id": 1}\r
+< "ev": "bye"
+< \r\n~>
+> status\r
+< succeeded (exit status 0)
+< \r\n~>
+x power off
+> poweroff\r
