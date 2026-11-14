@@ -376,3 +376,165 @@ translation). The Rust front end can load the same JSON files; Python-side strin
 (statuses, member counts) are English today.
 
 ---
+## 3. What Zoraya has and lacks for it
+
+Checked against Zoraya `origin/main` `0c3ada9`: `docs/design.md`, `docs/adr/index.md` and
+the ADRs it names, `docs/tasks/TASK-27-*`, `TASK-30-*`, `TASK-31-stage-10.md`,
+`docs/research/stage-10/`, and the code under `crates/`, `user/`, `ports/` where the docs
+were not enough. Nothing was built. Stage 9 and the C++ stage are tagged on `main`; nothing
+of stage 10 is merged yet (10a and 10e are in progress on work branches).
+
+**There is no TASK-33 in the repository** (not on `main`, not on any remote branch, not in
+history). The only record of "browser-engine foundations" is the list "What the next port
+will need" in `TASK-30-report.md`: shared file `mmap` and `madvise`, more mapping slots,
+`AF_UNIX` and server sockets, `posix_spawn`. Below, "TASK-33" means that list.
+
+### 3.1 TDLib's build and run needs
+
+| Need | Zoraya | Evidence | Consequence for the port |
+|---|---|---|---|
+| C++17 compiler and library | **present**: `zc++` (host clang, LLVM 20.1.8 libc++/libc++abi/libunwind, static), exceptions, RTTI, iostreams, `std::thread`; C locale only, no tzdb | TASK-30, ADR-0360…0367 | TDLib needs C++14/17 only; fine |
+| CMake | **present**: toolchain file `ports/cmake/zoraya.cmake`, used out of tree with `-DCMAKE_TOOLCHAIN_FILE=` pointing into a built Zoraya checkout | TASK-30-report | it searches `build/sysroot` only; OpenSSL/zlib/SQLite are in `build/ports/deps` → pass `OPENSSL_ROOT_DIR`, `ZLIB_ROOT` ourselves |
+| Host tools for code generation | host side (TDLib generates its TL sources with host binaries) | TDLib `prepare_cross_compiling` target | standard TDLib cross build: run `prepare_cross_compiling` with the host compiler first, then the target build; needs `gperf`, `php` not needed |
+| OpenSSL | **present**: 3.5.9 static, threads, `no-sock no-legacy no-asm`, roots in `/system/tls/roots` | docs/dependencies.md, ports/Makefile | TDLib uses OpenSSL for crypto (AES-IGE/CTR, SHA, RSA, DH) and memory-BIO TLS — `no-sock` does not matter; `no-asm` makes MTProto crypto slower but adequate |
+| zlib | **present**: 1.3.1 | ports | fine |
+| Threads | **present**: pthreads, 128 threads per process, 1 000 system-wide | design.md | TDLib per account: one scheduler + 3 extra threads (`Client.cpp`, `ADDITIONAL_THREAD_COUNT = 3`); with Python's few threads ≈ 10 — fine. Stacks are committed in full (no demand paging): keep thread stacks modest |
+| TCP client sockets, nonblocking connect | **present** (IPv4) | ADR-0225/0287 | fine |
+| IPv6 | **absent** | netgrant.rs, design.md | TDLib must stay on IPv4: `prefer_ipv6 = false` (the default); IPv6 connects fail fast with an error, harmless |
+| UDP, server sockets | **absent** | ADR-0287 item 9 | not needed (no calls) |
+| `getaddrinfo` | **present**; numeric addresses answered locally, names asked of `netd` only if granted | `crates/zoraya-posix/src/net.rs` | TDLib passes DC addresses as numeric strings through `getaddrinfo` (`IPAddress.cpp`) — works with an address-only grant |
+| `poll` | **absent** | design.md (ADR-0287 item 9 "not built") | TDLib has a `select` back end (`TD_POLL_SELECT`) — that is what an unknown `__unix__` platform gets by default (`platform.h`: falls into `TD_CYGWIN` → select + BSD event fd). Use it; `poll` would be better (no `FD_SETSIZE`) but is not needed |
+| `select`/`pselect` | **present** | design.md | used |
+| `epoll`, `kqueue`, `eventfd` | **absent** | — | not needed with the select back end |
+| `socketpair` / `AF_UNIX` | **absent** (TASK-33) | design.md 2151, 2168 | TDLib's BSD event fd (`EventFdBsd.cpp`) uses `socketpair(AF_UNIX)` → **one small TDLib patch**: a pipe-based event fd (`pipe2(O_NONBLOCK|O_CLOEXEC)`), exactly what Zoraya's CPython patch does for asyncio's self-pipe |
+| File locking | **partial**: `fcntl` record locks within one process only; no `flock` | survey of libposix | TDLib's `F_SETLK` on its binlog succeeds; a second `tgd` on the same account would **not** be stopped → `tgd` keeps its own guard (a lock directory created with `mkdir`, removed on exit, stale-checked by pid) |
+| `mmap` | **partial**: private anonymous only, 256 mappings per process | TASK-30-report, ADR-0320 | TDLib does not map files (its `MemoryMapping` is unused by the library); but its SQLite opens in **WAL**, which maps the `-shm` file shared → patch: `PRAGMA locking_mode=EXCLUSIVE` before `journal_mode=WAL` (WAL index then lives on the heap; TDLib is the only user of its database), or rollback journal. Zoraya's own SQLite is built with `SQLITE_OMIT_WAL`, so tgclient's `PRAGMA journal_mode=WAL` is a no-op there (stays `DELETE`) — no change needed |
+| `fsync`/durability | `fsync` makes nothing durable beyond `O_SYNC`; volume ≤ ~20.9 GiB | design.md | acceptable; media cache needs a size limit (TDLib `optimizeStorage` with a size, run at start) |
+| `clock_gettime`, `getrandom` | **present**; `getrandom` only in a program the shell started (a `fork` child gets none until 10h) | design.md 2168, TASK-31 | `tgd` must be the program the shell starts, not a child of the front end |
+| Signals | per-thread signals present | — | TDLib's `signals.cpp` sets `SIGPIPE` ignore etc. — check at the first run |
+| `sysconf`, `pthread_*affinity_np` | to check | TDLib `ThreadPthread.cpp` | affinity calls are behind `#if`; stub if the link fails |
+| Memory | QEMU guests 512 MiB; no demand paging, no copy-on-write (`fork` copies the whole process); 255 processes, 1 024 handles per process | design.md | TDLib with message DB for a big account: tens to a few hundred MB — the main risk; set `use_message_database` on but keep `td_files` bounded, measure early |
+
+### 3.2 Python's needs
+
+Zoraya has **CPython 3.15.2**, static (`/bin/python3`, 15.5 MB, library 37 MB; ADR-0320,
+`ports/Makefile` ~715–870, six patches). Built in: `_socket`, `select` (select only),
+`_ssl` and `_hashlib` (OpenSSL, so `hashlib.scrypt` is there), `_sqlite3` (SQLite 3.54.1,
+threadsafe, FTS5, **no WAL**), `zlib`, `_asyncio`, `_thread`; `json` tested. Not built:
+`ctypes`, shared modules (no `dlopen`), `_curses`, `readline`, `bz2`, `lzma`.
+
+| Need | Status | Note |
+|---|---|---|
+| `asyncio` | present (self-pipe patched to `os.pipe()`) | `tgd`'s loop as is |
+| `ssl` with verification | present; roots at `/system/tls/roots`; strict X.509 defaults | httpx: pass `verify=ssl.create_default_context()` (certifi's bundle is not needed) |
+| `sqlite3` + FTS5 | present, `contentless_delete` needs SQLite ≥ 3.43 → 3.54.1 ok | WAL pragma silently stays `DELETE` |
+| `ctypes` | absent | replaced by a built-in `_tdjson` module |
+| **A hook to add built-in C modules** | **absent**: no `Modules/Setup.local` step in the recipe | **generic request R1**; until then, `tgd`'s python is built from Zoraya's recipe with a private `Setup.local` and extra `LIBS` (TDLib's static libraries, libc++) — out of tree, in this repository |
+| C++ in `python3`'s link | `python3` is linked with `zcc` (C) | the static TDLib needs libc++/libc++abi/libunwind on the link line: link with `zc++`, or add the three archives — part of R1 |
+| `_curses` | absent | only matters for a Python front end; not chosen (§4) |
+| Pure-Python packages | `httpx`, `httpcore`, `h11`, `anyio`, `sniffio`, `idna`, `python-dotenv`, `segno` | copied into `tgd`'s own `site` directory; no pip on Zoraya |
+
+### 3.3 Images, media, fonts
+
+| Need (front end) | Zoraya | Note |
+|---|---|---|
+| JPEG (photos, avatars, thumbnails, minithumbnails) | libjpeg 9f — **only as a NetSurf dependency**, no system decoder for native apps | front end links libjpeg itself (POSIX/C++ front end: possible today) |
+| PNG | libpng 1.6.50 — NetSurf dependency only | same |
+| WebP (static stickers) | **absent** | port libwebp (plain C, small) into the front end |
+| GIF | NetSurf's own decoder only | rarely needed (TDLib sends GIFs as MP4) |
+| TGS (Lottie) | **absent** | rlottie (C++) — later; first version shows the sticker's emoji / thumbnail |
+| WebM VP9 + alpha | **absent** | libvpx — later; first frame from the thumbnail |
+| MP4 H.264 (GIFs, video, video notes) | **absent** | later, if ever (no video anywhere in Zoraya); poster + "open later" |
+| Ogg/Opus, any audio | **absent: no audio at all** | voice notes: transcription (AI) works without audio; playback waits for a Zoraya audio interface (request R9) |
+| Image widget in `zoraya-ui` | **absent** | a custom `Widget` would paint pixels; a POSIX window paints its own surface anyway |
+| Fonts | system TrueType rasteriser, Inter and JetBrains Mono, a simple shaper (no GSUB/GPOS); Latin + Cyrillic; CJK as boxes | messages in RU/UK/CS/EN render; others as boxes |
+| Emoji | **absent** (no colour or monochrome emoji font) | emoji are everywhere in this app (reactions, stickers, custom emoji). First version: draw emoji as their short name or a box; request R7 (an emoji font, colour bitmap or monochrome) |
+| Bidi, IME | absent | Arabic/Hebrew wrong; input via the four keyboard layouts (us, ua, ru, cz) with dead keys — enough for the user's languages |
+| Terminal width of emoji | (10a grid) | a terminal front end must treat wide characters consistently with 10a's grid; stage 10 leaves wide-character fonts out |
+
+### 3.4 The network grant
+
+- Grants are per command line, literal words before the command: `+net TARGET[:PORTS]`;
+  TARGET is a name, a `*.suffix` wildcard, an **IPv4 address**, an **IPv4 prefix
+  `A.B.C.D/N`** (`crates/zoraya-shell/src/netgrant.rs`) or `any`; PORTS one, a range, or
+  any. Several words union. IPv6: no. (ADR-0220, 0223, 0224, 0225, 0287.)
+- A program with only address/prefix rules cannot resolve names (ADR-0220 item 4) — fine
+  for Telegram, which is addresses; OpenRouter needs a name rule.
+- **So the grant works today**, typed on the line:
+  `+net 149.154.160.0/20:443 +net 91.108.0.0/16:443 +net 95.161.64.0/20:443
+  +net 185.76.151.0/24:443 +net openrouter.ai:443` — 443 only (TDLib also tries 80 and
+  5222; it settles on 443). The `/16` for `91.108` over-grants the five published `/22`s;
+  five words are the exact form. Media and CDN DCs are inside the same ranges.
+- `net web` (any public host on 80/443, ADR-0324) would cover all of it, but is only
+  allowed in an image description.
+- **Descriptions are image-only** (INV-0153-6, INV-0200-1): a program on the volume (our
+  `tgd`) has no description, so its grants (`+net …`, `+w DIR`) must be typed on every
+  line. Rooms' `+net` words are not built; terminals started from the panel hold the
+  network of their room. 10f adds a System+G grant line (ADR-0337) for grants while
+  running. → **generic request R2** (a user-written description, or a saved grant line,
+  for a program on the volume).
+- TLS: Mozilla's 108 roots, read-only; enough for `openrouter.ai`.
+
+### 3.5 A program's own directory
+
+ADR-0341 (accepted 2026-11-14, **stage 10 part 10g, not built**): a `data NAME as PATH`
+line gives `/data/ROOM/NAME` mounted under `~`, per room, counted against the room's
+storage, read-only for children — **only for programs described in the image**
+(INV-0341-1). Today a shell-launched program gets its current directory read-only, its
+line's `+w` words and a `/tmp` removed when the line ends. Panel-launched native apps get
+`/data/ROOM/APP` (ADR-0245).
+
+For `tgd` today: `+w ~/tg` on the line, `TG_DATA_DIR=~/tg` (tgclient already honours it).
+After 10g the same request R2 would let a volume program carry a `data` line.
+
+### 3.6 Desktop services
+
+- **Notifications: absent and not planned** (no ADR, task or backlog item). → request R6.
+- Clipboard: text only, native `zoraya-app` clients only (ADR-0170); POSIX windows have
+  none; terminal paste comes in 10b.
+- File chooser (Open / Save / PickDirectory): only over a channel the panel gives to apps
+  it launches (ADR-0167, ADR-0245); POSIX windows have none (NetSurf's downloads are
+  blocked for that reason).
+- Drag-and-drop: one file, read-only, file manager → window (ADR-0170, ADR-0248).
+
+### 3.7 The front end: what each option needs
+
+| | Native `zoraya-app` window (Rust) | POSIX program with a window (`zoraya_window_*`) | Terminal UI (stage 10) |
+|---|---|---|---|
+| How it is built | `no_std` Rust inside the Zoraya tree: a crate, `user/src/bin/X.rs`, an entry in the panel's const `APPS` table (`crates/zoraya-panel/src/lib.rs`); **no Rust `std` (ADR-0166), no out-of-tree SDK** | C/C++ with `zc++`, out of tree; raw pixel surface + `zoraya_text_*` (ADR-0317, 0326; how NetSurf runs) | C/C++ with `zc++`, out of tree, after 10a–10c (terminal for POSIX programs), with ncurses after 10d |
+| Allowed by this task? | **No**: it would put the program into the public repository. Possible only after a generic "native apps outside the image" change (R3) | Needs a `window` line — **image descriptions only** → generic request R4 (a window for a volume program) | **Yes**, no Zoraya change beyond stage 10 |
+| Widgets | Label, Button, TextField, ListView, ScrollView, Menu, Dialog…; no image widget, no rich multi-line text view | none (we draw everything) | ncurses windows |
+| Images | custom widget | we decode and blit | none (text placeholders) |
+| Clipboard / chooser / drop | yes | no | terminal paste (10b) |
+| Talks to `tgd` | channels; but **no name registry** (ADR-0053) — a parent must hand the handle; a separately started `tgd` cannot be found | pipes from a common parent (fork + exec) | same |
+
+### 3.8 The process layout this forces
+
+- `tgd` must be the program the shell starts: only it gets the line's network and random
+  (a `fork` child has neither until 10h).
+- There is no rendezvous between independently started programs (no name registry, no
+  `AF_UNIX`, no listening sockets, per-line `/tmp`). The front end therefore runs as `tgd`'s
+  **child**: `tgd` forks **first thing** (before TDLib and before most imports — `fork`
+  copies the whole process, no copy-on-write) and the child `exec`s the front end, with a
+  pipe pair on fds 3 and 4. Messages are JSON lines. The child keeps the terminal (or
+  later the window); `tgd` never writes to the terminal (logs to a file in its directory).
+- This keeps the working plan's rule: the front end holds the screen and no network use;
+  `tgd` holds the network and no screen. (Whether an `exec`ed child still holds the
+  parent's grant is to be checked in part 3; the front end never connects either way.)
+
+### 3.9 Generic requests (for the architect to pass on; none names a program)
+
+| | Request | Needed by | Without it |
+|---|---|---|---|
+| R1 | A documented hook to add built-in C/C++ modules to `python3` (`Modules/Setup.local` + extra link archives, link with `zc++` when they are C++) | part 2 | a private copy of the recipe |
+| R2 | A user-written description (or saved grant line) for a program on the volume: `+net`, `+w`, and after 10g a `data` line | daily use | grants typed on each line (a shell alias/script if `zosh` has one) |
+| R3 | Native `zoraya-app` programs built and installed outside the image (an SDK: crates published, a launch path for a volume program, a panel entry) | native window front end | — |
+| R4 | A window for a POSIX program on the volume (a `+window` word or a user description with `window`) | POSIX window front end | terminal only |
+| R5 | `poll` in libposix | nice to have (TDLib, Python `selectors`) | `select` |
+| R6 | A desktop notification interface (post, replace, withdraw, click → activate the app) | notifications | in-app counter |
+| R7 | An emoji font (colour bitmap or monochrome outline) and wide-character handling in the text stack and the terminal grid | emoji everywhere | short names / boxes |
+| R8 | `fcntl` record locks across processes (and `flock`) | safety of two instances | `tgd`'s own lock directory |
+| R9 | An audio output (and later input) interface for POSIX programs | voice notes | transcription only |
+| R10 | Shared, file-backed `mmap` (TASK-30's list) | not needed (patched away) | — |
+| R11 | `socketpair`/`AF_UNIX` (TASK-30's list) | not needed (patched away) | — |
+| R12 | Clipboard and the file chooser for POSIX programs with a window | sending files, copy | `+r DIR` and a path typed in |
