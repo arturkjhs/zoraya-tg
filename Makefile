@@ -86,11 +86,10 @@ $(TD_STAMP): $(TD_SRC_STAMP) ports/zoraya-tg.cmake
 	for l in $(TD_LIBS); do f=$$(find $(TD_BUILD) -name lib$$l.a | head -1); [ -n "$$f" ] || { echo "td: no lib$$l.a"; exit 1; }; cp $$f $(OUT)/lib/; done
 	cp $(TD_SRC)/td/telegram/td_json_client.h $(TD_SRC)/td/telegram/td_log.h $(OUT)/include/td/telegram/
 	cp $(TD_BUILD)/td/telegram/tdjson_export.h $(OUT)/include/td/telegram/
-	@# One archive of them all, for a size and for a simple link.
-	rm -f $(OUT)/lib/libtdjson_all.a && cd $(B)/obj && rm -rf tdall && mkdir tdall && cd tdall && \
-	  for l in $(TD_LIBS); do mkdir $$l && (cd $$l && $(ZAR) x $(OUT)/lib/lib$$l.a) || exit 1; done && \
-	  $(ZAR) rcs $(OUT)/lib/libtdjson_all.a */*.o
-	@echo "td: libtdjson_all.a $$(du -k $(OUT)/lib/libtdjson_all.a | cut -f1) KiB"
+	@# The archives stay separate: merging them by extraction loses members (two
+	@# libraries have a misc.cpp.o, libtde2e.a has two e2e_api.cpp.o), and lld,
+	@# unlike GNU ld, resolves across archives in any order.
+	@echo "td: the $(words $(TD_LIBS)) archives $$(cat $(addprefix $(OUT)/lib/lib,$(addsuffix .a,$(TD_LIBS))) | wc -c | awk '{ printf "%d", $$1 / 1024 }') KiB"
 	@touch $@
 
 # The names TDLib needs that libc.a does not export (ports/tdshim.c).
@@ -117,10 +116,18 @@ $(PY_ROOT)/.stamp:
 	$(MAKE) -C $(ZORAYA) -f ports/Makefile PYTHON_BUILD=$(PY_BUILD) PYTHON_STAGE=$(PY_STAGE) PYTHON_ROOT=$(PY_ROOT) LOGS=$(LOGS) $(PY_ROOT)/.stamp
 $(PY_STAMP): $(PY_ROOT)/.stamp $(TD_STAMP) $(OUT)/lib/libtdshim.a modules/_tdjson.c
 	printf '%s\n' '# zoraya-tg: TDLib JSON client, built in (Makefile, make python)' '*static*' \
-	  '_tdjson $(TG)/modules/_tdjson.c -I$(OUT)/include -DTDJSON_STATIC_DEFINE $(OUT)/lib/libtdjson_all.a $(OUT)/lib/libtdshim.a' \
+	  '_tdjson $(TG)/modules/_tdjson.c -I$(OUT)/include -DTDJSON_STATIC_DEFINE $(addprefix $(OUT)/lib/lib,$(addsuffix .a,$(TD_LIBS) tdshim))' \
 	  > $(PY_BUILD)/Modules/Setup.local
-	@$(call logged,PATH=$(ZTOOLS):$$PATH $(MAKE) -C $(PY_BUILD) python LINKCC=$(ZCXX) -j3,python-tdjson)
-	$(ZORAYA)/target/debug/zoraya-elf-check $(PY_BUILD)/python
+	@# makesetup keeps an absolute source as it is and puts its object under Modules/ + that path.
+	mkdir -p $(PY_BUILD)/Modules$(TG)/modules
+	@# makesetup turns Setup.local into the Makefile's lines first (CPython's make
+	@# stops after that, "re-run make"); the program is python.exe on a macOS host,
+	@# whose file system does not tell it from the Python/ directory (BUILDEXE).
+	@$(call logged,PATH=$(ZTOOLS):$$PATH $(MAKE) -C $(PY_BUILD) Makefile,python-tdjson-setup)
+	@$(call logged,PATH=$(ZTOOLS):$$PATH $(MAKE) -C $(PY_BUILD) LINKCC=$(ZCXX) -j3 $$(sed -n 's/^BUILDPYTHON=[[:space:]]*//p' $(PY_BUILD)/Makefile | sed 's/$$(BUILDEXE)/'"$$(sed -n 's/^BUILDEXE=[[:space:]]*//p' $(PY_BUILD)/Makefile)"'/'),python-tdjson)
+	cp $(PY_BUILD)/python$$(sed -n 's/^BUILDEXE=[[:space:]]*//p' $(PY_BUILD)/Makefile) $(B)/python3-tdjson
+	$(ZORAYA)/target/debug/zoraya-elf-check $(B)/python3-tdjson
+	@grep -q '_tdjson' $(PY_BUILD)/Modules/config.c || { echo "python: _tdjson is not in Modules/config.c"; exit 1; }
 	@touch $@
 
 # ---------------------------------------------------------------- the image part
@@ -128,7 +135,7 @@ $(PY_STAMP): $(PY_ROOT)/.stamp $(TD_STAMP) $(OUT)/lib/libtdshim.a modules/_tdjso
 root: $(OUT)/root/.stamp
 $(OUT)/root/.stamp: $(PY_STAMP) $(wildcard tests/*.py)
 	rm -rf $(OUT)/root && mkdir -p $(OUT)/root/bin $(OUT)/root/usr/lib $(OUT)/root/home
-	cp $(PY_BUILD)/python $(OUT)/root/bin/python3
+	cp $(B)/python3-tdjson $(OUT)/root/bin/python3
 	cp -R $(PY_ROOT)/usr/lib/. $(OUT)/root/usr/lib/
 	cp tests/*.py $(OUT)/root/home/
 	@echo "root: python3 $$(du -k $(OUT)/root/bin/python3 | cut -f1) KiB; the part $$(du -sk $(OUT)/root | cut -f1) KiB"

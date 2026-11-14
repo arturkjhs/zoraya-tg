@@ -4,9 +4,17 @@
  * generic request in docs/requests.md: when libposix has the name, its entry
  * here goes.
  *
- * poll and select: over pselect, which libposix implements for pipes,
- * sockets, files and terminals (ADR-0106); pselect takes at most 1024
- * descriptors (an fd_set), so does this poll.
+ * Zoraya's own shims for ported programs, libzshim.a and libpyshim.a
+ * (ports/apps of the Zoraya checkout), come after this one in python3's link
+ * and give the rest TDLib names: select (over pselect), bind, listen and
+ * accept (ENOSYS: TDLib's listening sockets, which its JSON client never
+ * makes) and __libc_current_sigrtmin (musl's SIGRTMIN, named by a function
+ * of TDLib's thread class that nothing calls). This file defines none of
+ * them, or the link would see each twice.
+ *
+ * poll: over pselect, which libposix implements for pipes, sockets, files
+ * and terminals (ADR-0106); pselect takes at most 1024 descriptors (an
+ * fd_set), so does this poll.
  *
  * pread and pwrite: lseek, read or write, lseek back. Not atomic against a
  * plain read or write of the same descriptor by another thread (TDLib's
@@ -16,18 +24,11 @@
  * usleep: nanosleep. mkdtemp: mkdir of random names (getrandom).
  * in6addr_any: the constant (Zoraya is IPv4 only, ADR-0225; TDLib names it
  * for an address family it then does not get).
- *
- * bind, listen, accept: a listening socket (TDLib's ServerSocketFd, which the
- * JSON client never makes): they fail with EOPNOTSUPP.
- *
- * __libc_current_sigrtmin: musl's SIGRTMIN, named by a function of TDLib's
- * thread class that nothing in the library calls; musl's value.
  */
 #include <errno.h>
 #include <netinet/in.h>
 #include <string.h>
 #include <sys/random.h>
-#include <sys/socket.h>
 #include <sys/stat.h>
 #include <poll.h>
 #include <pthread.h>
@@ -119,16 +120,6 @@ int poll(struct pollfd *fds, nfds_t nfds, int timeout)
 	return ready;
 }
 
-int select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds, struct timeval *timeout)
-{
-	struct timespec ts, *tp = NULL;
-	if (timeout) {
-		ts.tv_sec = timeout->tv_sec;
-		ts.tv_nsec = timeout->tv_usec * 1000L;
-		tp = &ts;
-	}
-	return pselect(nfds, readfds, writefds, exceptfds, tp, NULL);
-}
 
 static pthread_mutex_t positioned = PTHREAD_MUTEX_INITIALIZER;
 
@@ -195,28 +186,6 @@ char *mkdtemp(char *template)
 
 const struct in6_addr in6addr_any = IN6ADDR_ANY_INIT;
 
-int bind(int fd, const struct sockaddr *addr, socklen_t len)
-{
-	(void)fd; (void)addr; (void)len;
-	errno = EOPNOTSUPP;
-	return -1;
-}
 
-int listen(int fd, int backlog)
-{
-	(void)fd; (void)backlog;
-	errno = EOPNOTSUPP;
-	return -1;
-}
 
-int accept(int fd, struct sockaddr *addr, socklen_t *len)
-{
-	(void)fd; (void)addr; (void)len;
-	errno = EOPNOTSUPP;
-	return -1;
-}
 
-int __libc_current_sigrtmin(void)
-{
-	return 35;
-}

@@ -82,6 +82,7 @@ without six `X` fails with `EINVAL`.
 
 - `bind`, `listen`, `accept`, `sendmsg`, `in6addr_any`: named by a ported library's server sockets, its
   scatter write and its IPv6 any-address, none of which a client uses on an IPv4-only system (ADR-0225). Closed
-  here by stubs and one patch, see `docs/tdlib-report.md`.
+  by Zoraya's own `libzshim.a` (`bind`, `listen`, `accept` fail with `ENOSYS`), one patch (`sendmsg`) and the
+  constant in `ports/tdshim.c`; see `docs/tdlib-report.md`.
 - `__unix__` predefined by `zcc`: a ported library that tests `__unix__` falls into its "unknown Unix" branch
   (here: `select` and `socketpair`), worse than naming Zoraya. Patched per library instead.
