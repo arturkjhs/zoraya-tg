@@ -420,6 +420,10 @@ class Core:
         text = str(ref).strip()
         if not text:
             raise CoreError("which chat?")
+        if text.casefold() in ("me", "saved") and self.me.get("id"):
+            chat = await self.client.send({"@type": "createPrivateChat",
+                                           "user_id": self.me["id"], "force": False})
+            return int(chat["id"])
         try:
             number = int(text)
         except ValueError:

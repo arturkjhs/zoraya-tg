@@ -224,7 +224,7 @@ commands:
   summary CHAT [SCOPE]     AI summary of the chat: unread, day (default) or week
   status                   the login state and what tgd uses
   quit                     close TDLib cleanly and end
-CHAT is the number from the last `chats`, a chat id, or a part of the title."""
+CHAT is the number from the last `chats`, a chat id, a part of the title, or me (Saved Messages)."""
 
 _STATE_TEXT = {
     "need_credentials": "no api id and hash yet: type login",
