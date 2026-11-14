@@ -1,0 +1,11 @@
+--- a/sqlite/sqlite/sqlite3.c
++++ b/sqlite/sqlite/sqlite3.c
+@@ -22549,7 +22549,7 @@
+ /* #include "sqlcipher.h" */
+ /* #include "crypto.h" */
+ // #ifndef OMIT_MEMLOCK
+-#if defined(__unix__) || defined(__APPLE__) || defined(_AIX)
++#if defined(__unix__) || defined(__APPLE__) || defined(_AIX) || defined(__zoraya__)
+ #include <errno.h>
+ #include <unistd.h>
+ #include <sys/resource.h>

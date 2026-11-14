@@ -1,0 +1,91 @@
+--- a/tdutils/td/utils/port/platform.h
++++ b/tdutils/td/utils/port/platform.h
+@@ -55,6 +55,9 @@
+   #define TD_CYGWIN 1
+ #elif defined(__EMSCRIPTEN__)
+   #define TD_EMSCRIPTEN 1
++#elif defined(__zoraya__)
++  // Zoraya: POSIX through libposix and musl; no Linux interfaces (no epoll, eventfd)
++  #define TD_ZORAYA 1
+ #elif defined(__sun)
+   #define TD_SOLARIS 1
+   // TD_ILLUMOS can be already defined by CMake
+--- a/tdutils/td/utils/port/config.h
++++ b/tdutils/td/utils/port/config.h
+@@ -40,6 +40,11 @@
+ #elif TD_SOLARIS
+   #define TD_POLL_POLL 1
+   #define TD_EVENTFD_BSD 1
++#elif TD_ZORAYA
++  // poll(2), and the BSD event fd over a pipe: there is no socketpair
++  #define TD_POLL_POLL 1
++  #define TD_EVENTFD_BSD 1
++  #define TD_EVENTFD_PIPE 1
+ #else
+   #error "Poll's implementation is not defined"
+ #endif
+--- a/tdutils/td/utils/port/detail/EventFdBsd.h
++++ b/tdutils/td/utils/port/detail/EventFdBsd.h
+@@ -13,6 +13,9 @@
+ #include "td/utils/common.h"
+ #include "td/utils/port/detail/PollableFd.h"
+ #include "td/utils/port/EventFdBase.h"
++#if TD_EVENTFD_PIPE
++#include "td/utils/port/FileFd.h"
++#endif
+ #include "td/utils/port/SocketFd.h"
+ #include "td/utils/Status.h"
+ 
+@@ -20,8 +23,14 @@
+ namespace detail {
+ 
+ class EventFdBsd final : public EventFdBase {
++#if TD_EVENTFD_PIPE
++  // in_ is the pipe's write end, out_ its read end (the names of the socket pair's ends)
++  FileFd in_;
++  FileFd out_;
++#else
+   SocketFd in_;
+   SocketFd out_;
++#endif
+ 
+  public:
+   EventFdBsd() = default;
+--- a/tdutils/td/utils/port/detail/EventFdBsd.cpp
++++ b/tdutils/td/utils/port/detail/EventFdBsd.cpp
+@@ -23,12 +23,27 @@
+ #include <poll.h>
+ #include <sys/socket.h>
+ #include <sys/types.h>
++#if TD_EVENTFD_PIPE
++#include <unistd.h>
++#endif
+ 
+ namespace td {
+ namespace detail {
+ 
+ // TODO: it is extremely non optimal on Darwin. kqueue events should be used instead
+ void EventFdBsd::init() {
++#if TD_EVENTFD_PIPE
++  int pipe_fds[2];
++  int pipe_err = pipe(pipe_fds);
++  auto pipe_errno = errno;
++  LOG_IF(FATAL, pipe_err == -1) << Status::PosixError(pipe_errno, "pipe failed");
++  auto pipe_out = NativeFd(pipe_fds[0]);
++  auto pipe_in = NativeFd(pipe_fds[1]);
++  pipe_out.set_is_blocking_unsafe(false).ensure();
++  pipe_in.set_is_blocking_unsafe(false).ensure();
++  in_ = FileFd::from_native_fd(std::move(pipe_in));
++  out_ = FileFd::from_native_fd(std::move(pipe_out));
++#else
+   int fds[2];
+   int err = socketpair(AF_UNIX, SOCK_STREAM, 0, fds);
+   auto socketpair_errno = errno;
+@@ -50,6 +65,7 @@
+ 
+   in_ = SocketFd::from_native_fd(std::move(fd_a)).move_as_ok();
+   out_ = SocketFd::from_native_fd(std::move(fd_b)).move_as_ok();
++#endif
+ }
+ 
+ bool EventFdBsd::empty() {

@@ -1,0 +1,8 @@
+# Pinned sources of zoraya-tg. One archive per line: name, version, SHA-256,
+# file name in the cache build/src/, URL. `make fetch` downloads what is missing
+# and refuses an archive whose SHA-256 differs; nothing else downloads.
+#
+# td: TDLib has tagged no release since v1.8.0 (2021); it is pinned by commit, by
+# the archive GitHub generates for it (CMakeLists.txt says 1.8.70). The SHA-256
+# was taken at first fetch, 2026-11-14 (trust on first use, as Zoraya's ADR-0109).
+td        1.8.70-c8828d50  ebaaa9686e8756630dce1862189ddeb9dce0ea7c20fcb806a3f0c9fac56f0923  td-c8828d50.tar.gz  https://github.com/tdlib/td/archive/c8828d50f5eac2fc7089ce1089d7ce9095c61b5e.tar.gz

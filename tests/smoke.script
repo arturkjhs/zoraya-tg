@@ -1,0 +1,30 @@
+# TG-02 smoke test (make smoke): python3 of zoraya-tg with _tdjson, on a volume
+# made by Zoraya's tools/run-disk.sh with EXTRA_ROOT=out/root; the programs of
+# tests/*.py in /home. No account and no network.
+! panicked
+! first process ended
+! Traceback
+< Type help to begin, or help tour.
+< \r\n~>
+> python3 -V\r
+< Python 3.15.2
+< \r\n~>
+# Part 1: td_execute, synchronous.
+> python3 -c 'import _tdjson, json; print(_tdjson.execute(json.dumps({"@type":"getOption","name":"version"})))'\r
+< "@type":"optionValueString","value":"1.8.70"
+< \r\n~>
+> status\r
+< \r\nsucceeded (exit status 0)
+< \r\n~>
+# Part 2: a client (td_create_client_id, td_send, td_receive).
+> python3 tdjson_client.py\r
+< client id 1
+< recv updateAuthorizationState authorizationStateWaitTdlibParameters
+< waiting True version True closed True
+< client done
+< \r\n~>
+> status\r
+< \r\nsucceeded (exit status 0)
+< \r\n~>
+x power off
+> poweroff\r
