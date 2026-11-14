@@ -75,7 +75,8 @@ Cross-build TDLib at tgclient's pinned commit (`42e6a525…`, 1.8.67) with `zc++
 - target step: `-DCMAKE_TOOLCHAIN_FILE=<zoraya>/ports/cmake/zoraya.cmake`,
   `OPENSSL_ROOT_DIR`/`ZLIB_ROOT` into `<zoraya>/build/ports/deps`, static, `tdjson_static`;
 - patches (kept small, in `patches/td/`): platform detection for Zoraya (or rely on the
-  `__unix__` → select fallback, §3.1); `EventFdBsd` over `pipe2` instead of `socketpair`;
+  `__unix__` → select fallback, §3.1); `EventFdBsd` over `pipe2` instead of `socketpair`
+  (dropped when R5/TASK-33 F1 lands: then `poll` + in-process `eventfd`);
   `PRAGMA locking_mode=EXCLUSIVE` before WAL in `SqliteConnectionSafe.cpp`; stubs for any
   missing call the link reports (affinity, `sysconf` names).
 - a probe program `td-probe` (C++, ~100 lines, `td_json_client`): starts a client on the
@@ -196,13 +197,24 @@ TGS stickers (rlottie, C++), WebM stickers (libvpx), voice notes (Opus + R9), GI
 | 7 window | after 5 | **R4** (or R3), R7, R12 |
 | 8 media | — | R6, R9, video |
 
-TASK-33 (browser-engine foundations: `AF_UNIX`, `poll`, shared memory) does not exist as a
-task yet (§3); **nothing here waits for it**: TDLib is patched to need neither
-`socketpair` nor shared `mmap`, and `select` replaces `poll`.
+TASK-33 (browser-engine foundations, proposed ADR-0410 to 0421 on `origin/adr/browser-engine`,
+§3): **nothing here waits for it**, but several parts get simpler when it lands:
+- F1 (`poll`, in-process `eventfd`): part 1 drops its event-fd patch and uses TDLib's `poll`
+  back end;
+- F4 (`posix_spawn` with a grant list): part 3/4's fork-and-exec becomes a spawn, and the
+  front end is given no network by rule;
+- F7 (socket files in a program's own directory): `tgd` can run in the background and
+  `tg-term` (or the window) attach to it later;
+- F5/F8 (more mappings, 2 GiB guests): the memory risk shrinks;
+- D6 (libjpeg-turbo, libwebp) and E5 (clipboard and chooser for POSIX windows): part 7's
+  decoders and file handling.
+
+The WAL patch stays: ADR-0413 does not offer shared mapping of regular files.
 
 ## The generic requests for Zoraya (to pass on)
 
-Worded to name no program; details in §3.9.
+Worded to name no program; details in §3.9. **R1, R2 and R5 are already in Zoraya's
+backlog** (`c28fecf`); R11 and R12 are covered by TASK-33's proposals (F2, E5).
 
 1. **R1** A documented hook to add built-in C/C++ modules to `python3` (`Setup.local`, extra
    link archives, a C++ link).

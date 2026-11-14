@@ -403,10 +403,31 @@ the ADRs it names, `docs/tasks/TASK-27-*`, `TASK-30-*`, `TASK-31-stage-10.md`,
 were not enough. Nothing was built. Stage 9 and the C++ stage are tagged on `main`; nothing
 of stage 10 is merged yet (10a and 10e are in progress on work branches).
 
-**There is no TASK-33 in the repository** (not on `main`, not on any remote branch, not in
-history). The only record of "browser-engine foundations" is the list "What the next port
-will need" in `TASK-30-report.md`: shared file `mmap` and `madvise`, more mapping slots,
-`AF_UNIX` and server sockets, `posix_spawn`. Below, "TASK-33" means that list.
+**TASK-33** (browser-engine foundations) is on the branch `origin/adr/browser-engine`
+(`741471f`, pushed 2026-11-14, not merged): **proposed** ADR-0410 to ADR-0421 and
+`docs/research/browser-engine/plan.md`, awaiting the architect's decisions. The parts that
+matter here:
+
+| TASK-33 part | What | ADR (proposed) | Effect on this port |
+|---|---|---|---|
+| F1 | `poll`, `ppoll`, `select` over one wait; `eventfd` within a process | ADR-0414 | TDLib can use its `poll` back end and its Linux `eventfd` (one process) — no patch |
+| F2 | `AF_UNIX`: `socketpair`, `sendmsg`/`recvmsg` with `SCM_RIGHTS` | ADR-0412 | TDLib's BSD event fd would work unpatched; CPython's self-pipe patch could go |
+| F3 | `memfd_create`, `shm_open(SHM_ANON)`, `MAP_SHARED` of memory descriptors, seals | ADR-0413 | **not** shared mapping of regular files (item 7: "not offered"; a database needs "a pager in `fsd`, its own ADR") → the WAL patch stays |
+| F4 | `posix_spawn` with a grant list (`POSIX_SPAWN_GRANT_NET`…), nothing by default | ADR-0411 item 1 | `tgd` can start the front end without copying itself, and the child gets no network by rule |
+| F5, F8 | 4 096 mappings per process; 2 GiB guests | ADR-0415 | eases the memory risk for TDLib |
+| F7 | socket files in a program's own directory or its line's `/tmp`; TCP `bind`/`listen` | ADR-0412 item 5 | a front end started separately could connect to a running `tgd` through a socket in `tgd`'s directory |
+| D3 | FreeType, HarfBuzz, fontconfig | ADR-0416 | better text; **emoji and CJK remain "a later choice of files"** |
+| D6 | ports of libjpeg-turbo, libwebp, libxml2 … | ADR-0410 | the window front end's JPEG and WebP decoders come as ports |
+| E5 | clipboard and chooser for POSIX windows | ADR-0419 items 5, 6 | = request R12 |
+
+Not in TASK-33: a window for a program on the volume (the engine is described in the image),
+notifications, audio, emoji fonts.
+
+Separately, `main` already carries **three of this analysis's requests** in
+`docs/backlog.md` (`c28fecf`, "Three requests from outside work", from the architect, for
+the next free build slot after TASK-31): a `python3` build hook for built-in modules (R1),
+`poll`/`ppoll` (R5, = F1), and programs installed on the volume with saved grants and own
+directory (R2).
 
 ### 3.1 TDLib's build and run needs
 
@@ -422,17 +443,17 @@ will need" in `TASK-30-report.md`: shared file `mmap` and `madvise`, more mappin
 | IPv6 | **absent** | netgrant.rs, design.md | TDLib must stay on IPv4: `prefer_ipv6 = false` (the default); IPv6 connects fail fast with an error, harmless |
 | UDP, server sockets | **absent** | ADR-0287 item 9 | not needed (no calls) |
 | `getaddrinfo` | **present**; numeric addresses answered locally, names asked of `netd` only if granted | `crates/zoraya-posix/src/net.rs` | TDLib passes DC addresses as numeric strings through `getaddrinfo` (`IPAddress.cpp`) — works with an address-only grant |
-| `poll` | **absent** | design.md (ADR-0287 item 9 "not built") | TDLib has a `select` back end (`TD_POLL_SELECT`) — that is what an unknown `__unix__` platform gets by default (`platform.h`: falls into `TD_CYGWIN` → select + BSD event fd). Use it; `poll` would be better (no `FD_SETSIZE`) but is not needed |
+| `poll` | **absent**; F1 (ADR-0414, proposed) and the backlog add `poll`/`ppoll` and an in-process `eventfd` | design.md (ADR-0287 item 9 "not built"); TASK-33 | until then TDLib's `select` back end (`TD_POLL_SELECT`) — what an unknown `__unix__` platform gets by default (`platform.h`: falls into `TD_CYGWIN` → select + BSD event fd). After F1: `TD_POLL_POLL` + `TD_EVENTFD_LINUX` (TDLib is one process), no patch |
 | `select`/`pselect` | **present** | design.md | used |
-| `epoll`, `kqueue`, `eventfd` | **absent** | — | not needed with the select back end |
-| `socketpair` / `AF_UNIX` | **absent** (TASK-33) | design.md 2151, 2168 | TDLib's BSD event fd (`EventFdBsd.cpp`) uses `socketpair(AF_UNIX)` → **one small TDLib patch**: a pipe-based event fd (`pipe2(O_NONBLOCK|O_CLOEXEC)`), exactly what Zoraya's CPython patch does for asyncio's self-pipe |
+| `epoll`, `kqueue`, `eventfd` | **absent**; `eventfd` within a process comes with F1; `epoll` stays on the deny list (ADR-0414) | — | not needed |
+| `socketpair` / `AF_UNIX` | **absent**; F2 (ADR-0412, proposed) | design.md 2151, 2168 | until F1 or F2: TDLib's BSD event fd (`EventFdBsd.cpp`) uses `socketpair(AF_UNIX)` → **one small TDLib patch**, a pipe-based event fd (`pipe2(O_NONBLOCK|O_CLOEXEC)`), as Zoraya's CPython patch does for asyncio's self-pipe. Dropped once F1 lands |
 | File locking | **partial**: `fcntl` record locks within one process only; no `flock` | survey of libposix | TDLib's `F_SETLK` on its binlog succeeds; a second `tgd` on the same account would **not** be stopped → `tgd` keeps its own guard (a lock directory created with `mkdir`, removed on exit, stale-checked by pid) |
-| `mmap` | **partial**: private anonymous only, 256 mappings per process | TASK-30-report, ADR-0320 | TDLib does not map files (its `MemoryMapping` is unused by the library); but its SQLite opens in **WAL**, which maps the `-shm` file shared → patch: `PRAGMA locking_mode=EXCLUSIVE` before `journal_mode=WAL` (WAL index then lives on the heap; TDLib is the only user of its database), or rollback journal. Zoraya's own SQLite is built with `SQLITE_OMIT_WAL`, so tgclient's `PRAGMA journal_mode=WAL` is a no-op there (stays `DELETE`) — no change needed |
+| `mmap` | **partial**: private anonymous only, 256 mappings per process; F3 adds shared memory descriptors, F5 4 096 mappings — **shared mapping of regular files is not offered** even then (ADR-0413 item 7) | TASK-30-report, ADR-0320, ADR-0413 | TDLib does not map files (its `MemoryMapping` is unused by the library); but its SQLite opens in **WAL**, which maps the `-shm` file shared → patch: `PRAGMA locking_mode=EXCLUSIVE` before `journal_mode=WAL` (WAL index then lives on the heap; TDLib is the only user of its database), or rollback journal. This patch stays. Zoraya's own SQLite is built with `SQLITE_OMIT_WAL`, so tgclient's `PRAGMA journal_mode=WAL` is a no-op there — no change needed |
 | `fsync`/durability | `fsync` makes nothing durable beyond `O_SYNC`; volume ≤ ~20.9 GiB | design.md | acceptable; media cache needs a size limit (TDLib `optimizeStorage` with a size, run at start) |
 | `clock_gettime`, `getrandom` | **present**; `getrandom` only in a program the shell started (a `fork` child gets none until 10h) | design.md 2168, TASK-31 | `tgd` must be the program the shell starts, not a child of the front end |
 | Signals | per-thread signals present | — | TDLib's `signals.cpp` sets `SIGPIPE` ignore etc. — check at the first run |
 | `sysconf`, `pthread_*affinity_np` | to check | TDLib `ThreadPthread.cpp` | affinity calls are behind `#if`; stub if the link fails |
-| Memory | QEMU guests 512 MiB; no demand paging, no copy-on-write (`fork` copies the whole process); 255 processes, 1 024 handles per process | design.md | TDLib with message DB for a big account: tens to a few hundred MB — the main risk; set `use_message_database` on but keep `td_files` bounded, measure early |
+| Memory | QEMU guests 512 MiB (F8: 2 GiB guests for big programs); no demand paging, no copy-on-write (`fork` copies the whole process); 255 processes, 1 024 handles per process | design.md, ADR-0415 | TDLib with message DB for a big account: tens to a few hundred MB — the main risk; set `use_message_database` on but keep `td_files` bounded, measure early |
 
 ### 3.2 Python's needs
 
@@ -459,7 +480,7 @@ threadsafe, FTS5, **no WAL**), `zlib`, `_asyncio`, `_thread`; `json` tested. Not
 |---|---|---|
 | JPEG (photos, avatars, thumbnails, minithumbnails) | libjpeg 9f — **only as a NetSurf dependency**, no system decoder for native apps | front end links libjpeg itself (POSIX/C++ front end: possible today) |
 | PNG | libpng 1.6.50 — NetSurf dependency only | same |
-| WebP (static stickers) | **absent** | port libwebp (plain C, small) into the front end |
+| WebP (static stickers) | **absent**; libwebp is a TASK-33 port (D6, as is libjpeg-turbo) | the window front end links it |
 | GIF | NetSurf's own decoder only | rarely needed (TDLib sends GIFs as MP4) |
 | TGS (Lottie) | **absent** | rlottie (C++) — later; first version shows the sticker's emoji / thumbnail |
 | WebM VP9 + alpha | **absent** | libvpx — later; first frame from the thumbnail |
@@ -467,7 +488,7 @@ threadsafe, FTS5, **no WAL**), `zlib`, `_asyncio`, `_thread`; `json` tested. Not
 | Ogg/Opus, any audio | **absent: no audio at all** | voice notes: transcription (AI) works without audio; playback waits for a Zoraya audio interface (request R9) |
 | Image widget in `zoraya-ui` | **absent** | a custom `Widget` would paint pixels; a POSIX window paints its own surface anyway |
 | Fonts | system TrueType rasteriser, Inter and JetBrains Mono, a simple shaper (no GSUB/GPOS); Latin + Cyrillic; CJK as boxes | messages in RU/UK/CS/EN render; others as boxes |
-| Emoji | **absent** (no colour or monochrome emoji font) | emoji are everywhere in this app (reactions, stickers, custom emoji). First version: draw emoji as their short name or a box; request R7 (an emoji font, colour bitmap or monochrome) |
+| Emoji | **absent** (no colour or monochrome emoji font); TASK-33's fonts ADR (0416) leaves emoji "a later choice of files" | emoji are everywhere in this app (reactions, stickers, custom emoji). First version: draw emoji as their short name or a box; request R7 |
 | Bidi, IME | absent | Arabic/Hebrew wrong; input via the four keyboard layouts (us, ua, ru, cz) with dead keys — enough for the user's languages |
 | Terminal width of emoji | (10a grid) | a terminal front end must treat wide characters consistently with 10a's grid; stage 10 leaves wide-character fonts out |
 
@@ -538,22 +559,27 @@ After 10g the same request R2 would let a volume program carry a `data` line.
   pipe pair on fds 3 and 4. Messages are JSON lines. The child keeps the terminal (or
   later the window); `tgd` never writes to the terminal (logs to a file in its directory).
 - This keeps the working plan's rule: the front end holds the screen and no network use;
-  `tgd` holds the network and no screen. (Whether an `exec`ed child still holds the
+  `tgd` holds the network and no screen.
+- With TASK-33's F4 (`posix_spawn` with a grant list) `tgd` starts the front end without
+  copying itself, and the child gets no network or random by rule — the split is then
+  enforced, not only kept. With F7 (socket files in a program's own directory) `tgd` can run
+  as a background job and a front end started later connects to it — the shape the working
+  plan had in mind. (Whether an `exec`ed child still holds the
   parent's grant is to be checked in part 3; the front end never connects either way.)
 
 ### 3.9 Generic requests (for the architect to pass on; none names a program)
 
 | | Request | Needed by | Without it |
 |---|---|---|---|
-| R1 | A documented hook to add built-in C/C++ modules to `python3` (`Modules/Setup.local` + extra link archives, link with `zc++` when they are C++) | part 2 | a private copy of the recipe |
-| R2 | A user-written description (or saved grant line) for a program on the volume: `+net`, `+w`, and after 10g a `data` line | daily use | grants typed on each line (a shell alias/script if `zosh` has one) |
+| R1 | A documented hook to add built-in C/C++ modules to `python3` (`Modules/Setup.local` + extra link archives, link with `zc++` when they are C++) — **in Zoraya's backlog** (`c28fecf`, item 1) | part 2 | a private copy of the recipe |
+| R2 | A user-written description (or saved grant line) for a program on the volume: `+net`, `+w`, and after 10g a `data` line — **in Zoraya's backlog** (`c28fecf`, item 3, design first) | daily use | grants typed on each line (a shell alias/script if `zosh` has one) |
 | R3 | Native `zoraya-app` programs built and installed outside the image (an SDK: crates published, a launch path for a volume program, a panel entry) | native window front end | — |
 | R4 | A window for a POSIX program on the volume (a `+window` word or a user description with `window`) | POSIX window front end | terminal only |
-| R5 | `poll` in libposix | nice to have (TDLib, Python `selectors`) | `select` |
+| R5 | `poll` in libposix — **in Zoraya's backlog** (`c28fecf`, item 2) and TASK-33 F1 | removes the TDLib event-fd patch | `select` |
 | R6 | A desktop notification interface (post, replace, withdraw, click → activate the app) | notifications | in-app counter |
 | R7 | An emoji font (colour bitmap or monochrome outline) and wide-character handling in the text stack and the terminal grid | emoji everywhere | short names / boxes |
 | R8 | `fcntl` record locks across processes (and `flock`) | safety of two instances | `tgd`'s own lock directory |
 | R9 | An audio output (and later input) interface for POSIX programs | voice notes | transcription only |
-| R10 | Shared, file-backed `mmap` (TASK-30's list) | not needed (patched away) | — |
-| R11 | `socketpair`/`AF_UNIX` (TASK-30's list) | not needed (patched away) | — |
-| R12 | Clipboard and the file chooser for POSIX programs with a window | sending files, copy | `+r DIR` and a path typed in |
+| R10 | Shared mapping of regular files — **not offered** by TASK-33 (ADR-0413 item 7: a pager in `fsd`, its own ADR) | not needed (patched away) | — |
+| R11 | `socketpair`/`AF_UNIX` — TASK-33 F2 (ADR-0412); socket files in own directory F7 | not needed (patched away); F7 allows a separately started front end | — |
+| R12 | Clipboard and the file chooser for POSIX programs with a window — TASK-33 E5 (ADR-0419 items 5, 6) | sending files, copy | `+r DIR` and a path typed in |
