@@ -1,5 +1,7 @@
 # TG-01: tgclient on Zoraya — analysis
 
+Corrections after TG-02's report (`docs/tdlib-report.md`) are marked in §3.1.
+
 Sources: `~/workspace/tgclient` at `ccba758` (2026-10-10; read-only, working-tree edits of the
 architect not read beyond code), its `CLAUDE.md` (architecture notes, in Russian) and
 `docs/FEATURE_GAPS.md`; TDLib source in `tgclient/vendor/td` (pinned commit
@@ -443,11 +445,11 @@ directory (R2).
 | IPv6 | **absent** | netgrant.rs, design.md | TDLib must stay on IPv4: `prefer_ipv6 = false` (the default); IPv6 connects fail fast with an error, harmless |
 | UDP, server sockets | **absent** | ADR-0287 item 9 | not needed (no calls) |
 | `getaddrinfo` | **present**; numeric addresses answered locally, names asked of `netd` only if granted | `crates/zoraya-posix/src/net.rs` | TDLib passes DC addresses as numeric strings through `getaddrinfo` (`IPAddress.cpp`) — works with an address-only grant |
-| `poll` | **absent**; F1 (ADR-0414, proposed) and the backlog add `poll`/`ppoll` and an in-process `eventfd` | design.md (ADR-0287 item 9 "not built"); TASK-33 | until then TDLib's `select` back end (`TD_POLL_SELECT`) — what an unknown `__unix__` platform gets by default (`platform.h`: falls into `TD_CYGWIN` → select + BSD event fd). After F1: `TD_POLL_POLL` + `TD_EVENTFD_LINUX` (TDLib is one process), no patch |
-| `select`/`pselect` | **present** | design.md | used |
+| `poll` | **absent**; F1 (ADR-0414, proposed) and the backlog add `poll`/`ppoll` and an in-process `eventfd` | design.md (ADR-0287 item 9 "not built"); TASK-33 | `zcc` predefines `__zoraya__` and **not** `__unix__` (TG-02), so TDLib's `platform.h` stops with `#error` — there is no automatic `select` fallback (an earlier version of this row said so; wrong). TG-02 adds `TD_ZORAYA` with `TD_POLL_POLL` and a `poll` shim over `pselect`. After F1: the real `poll` and `TD_EVENTFD_LINUX` |
+| `select`/`pselect` | `pselect` in libc.a; `select` only in Zoraya's `libzshim.a` (TG-02) | design.md, TG-02 | TG-02 shims `poll` over `pselect` |
 | `epoll`, `kqueue`, `eventfd` | **absent**; `eventfd` within a process comes with F1; `epoll` stays on the deny list (ADR-0414) | — | not needed |
 | `socketpair` / `AF_UNIX` | **absent**; F2 (ADR-0412, proposed) | design.md 2151, 2168 | until F1 or F2: TDLib's BSD event fd (`EventFdBsd.cpp`) uses `socketpair(AF_UNIX)` → **one small TDLib patch**, a pipe-based event fd (`pipe2(O_NONBLOCK|O_CLOEXEC)`), as Zoraya's CPython patch does for asyncio's self-pipe. Dropped once F1 lands |
-| File locking | **partial**: `fcntl` record locks within one process only; no `flock` | survey of libposix | TDLib's `F_SETLK` on its binlog succeeds; a second `tgd` on the same account would **not** be stopped → `tgd` keeps its own guard (a lock directory created with `mkdir`, removed on exit, stale-checked by pid) |
+| File locking | **absent**: libposix answers every `fcntl` lock command with `EINVAL` (TG-02, `docs/tdlib-report.md`); no `flock` | TG-02 | TDLib's `FileFd::lock` fails and the database does not open → patch under `TD_ZORAYA` taking the lock as granted (this row first said the lock succeeds within a process; wrong). A second `tgd` on the same account is then not stopped by TDLib → `tgd` keeps its own guard (a lock directory created with `mkdir`, removed on exit, stale-checked by pid) |
 | `mmap` | **partial**: private anonymous only, 256 mappings per process; F3 adds shared memory descriptors, F5 4 096 mappings — **shared mapping of regular files is not offered** even then (ADR-0413 item 7) | TASK-30-report, ADR-0320, ADR-0413 | TDLib does not map files (its `MemoryMapping` is unused by the library); but its SQLite opens in **WAL**, which maps the `-shm` file shared → patch: `PRAGMA locking_mode=EXCLUSIVE` before `journal_mode=WAL` (WAL index then lives on the heap; TDLib is the only user of its database), or rollback journal. This patch stays. Zoraya's own SQLite is built with `SQLITE_OMIT_WAL`, so tgclient's `PRAGMA journal_mode=WAL` is a no-op there — no change needed |
 | `fsync`/durability | `fsync` makes nothing durable beyond `O_SYNC`; volume ≤ ~20.9 GiB | design.md | acceptable; media cache needs a size limit (TDLib `optimizeStorage` with a size, run at start) |
 | `clock_gettime`, `getrandom` | **present**; `getrandom` only in a program the shell started (a `fork` child gets none until 10h) | design.md 2168, TASK-31 | `tgd` must be the program the shell starts, not a child of the front end |

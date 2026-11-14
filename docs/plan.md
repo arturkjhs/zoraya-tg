@@ -67,43 +67,33 @@ the architect (travelling) are marked **Decided** with the reason, so they can b
 Each part is about the same size (one to two weeks of a session), ends in something you can
 see, and has a **done when**.
 
-### Part 1 — TDLib for Zoraya (this repository; can start now)
+### Parts 1 and 2 — TDLib for Zoraya, `python3` with `_tdjson` — **done by TG-02**
 
-Cross-build TDLib at tgclient's pinned commit (`42e6a525…`, 1.8.67) with `zc++` and
-`ports/cmake/zoraya.cmake`, out of tree:
-- host step: `prepare_cross_compiling` with the host compiler (TL generators, `gperf`);
-- target step: `-DCMAKE_TOOLCHAIN_FILE=<zoraya>/ports/cmake/zoraya.cmake`,
-  `OPENSSL_ROOT_DIR`/`ZLIB_ROOT` into `<zoraya>/build/ports/deps`, static, `tdjson_static`;
-- patches (kept small, in `patches/td/`): platform detection for Zoraya (or rely on the
-  `__unix__` → select fallback, §3.1); `EventFdBsd` over `pipe2` instead of `socketpair`
-  (dropped when R5/TASK-33 F1 lands: then `poll` + in-process `eventfd`);
-  `PRAGMA locking_mode=EXCLUSIVE` before WAL in `SqliteConnectionSafe.cpp`; stubs for any
-  missing call the link reports (affinity, `sysconf` names).
-- a probe program `td-probe` (C++, ~100 lines, `td_json_client`): starts a client on the
-  **test DC**, prints the TDLib version and the authorization states.
+TG-02 (`docs/tdlib-report.md`, commits `27ffaff`…`ec03c26`) cross-built TDLib
+(`c8828d50`, 1.8.70) with `zcc`/`zc++` and Zoraya's toolchain file, three patches under
+`TD_ZORAYA`/`__zoraya__` (platform with the `poll` loop and a pipe event fd; SQLCipher's
+`<unistd.h>`; `writev` instead of `sendmsg`), a shim `ports/tdshim.c` (`poll` over
+`pselect`, `pread`/`pwrite`, `usleep`, `mkdtemp`, `in6addr_any`), and `python3` with the
+built-in `_tdjson` (Zoraya's recipe run privately, `Setup.local`, linked with `zc++`).
+`make smoke` passes inside Zoraya under HVF: version 1.8.70, a client reaches
+`authorizationStateWaitTdlibParameters` and closes. `python3` is 39.4 MB loaded (TDLib
+adds ~27 MB).
 
-**Done when:** on Zoraya (QEMU), `+net 149.154.160.0/20:443 +net 91.108.0.0/16:443 +w
-/tmp/td td-probe` prints the version and reaches `authorizationStateWaitPhoneNumber` on the
-test DC, and closes cleanly; the build is one script, reproducible from a clean checkout.
-Measure: binary size, resident memory after reaching the state.
-
-Zoraya needs: nothing (R5 `poll` optional).
-
-### Part 2 — `python3` with `_tdjson` (this repository; can start after part 1)
-
-- `_tdjson.c` (~150 lines): `create_client_id()`, `send(int, bytes)`,
-  `receive(float) -> bytes | None` (releases the GIL), `execute(bytes) -> bytes | None`.
-- Build Zoraya's CPython recipe privately with a `Setup.local` naming `_tdjson` and the
-  TDLib archives, linked with `zc++` (libc++ for TDLib).
-- A ~30-line `TdJson` replacement for tgclient's `td/tdjson.py` that uses `_tdjson`.
-
-**Done when:** on Zoraya, `python3-tg -c` running tgclient's own `TdHub`/`TdClient` with the
-new binding reaches `authorizationStateWaitPhoneNumber` on the test DC, with the asyncio loop
-and the `td-receive` thread working together; `selftest.py`'s TDLib checks (version,
-`parseMarkdown`) pass.
-
-Zoraya needs: **R1** (a hook for built-in modules); without it the recipe is copied and
-kept in step by hand.
+What is left of the original parts 1–2, now the **first step of part 4**:
+- **File locks:** libposix answers every `fcntl` lock command with `EINVAL`, so TDLib's
+  database will not open → a patch under `TD_ZORAYA` that takes `FileFd::lock` as granted,
+  with `tgd`'s own single-instance guard; R8 later.
+- **WAL:** try `setTdlibParameters` with a database; if `PRAGMA journal_mode=WAL` fails,
+  `PRAGMA locking_mode=EXCLUSIVE` first.
+- **The network grant** (TG-02's open question 3): answered in analysis §3.4 — `+net`
+  takes IPv4 addresses and prefixes, so the DC ranges can be granted today.
+- **The TDLib pin:** TG-02 pinned `c8828d50` (1.8.70); tgclient is on `42e6a525` (1.8.67).
+  `tgd` must use one TDLib for both, so either tgclient moves to 1.8.70 (check the API
+  changes against `td_api.tl`, as `FEATURE_GAPS.md` warns) or this repository's pin moves
+  back. **Decided:** move tgclient forward (newer server-side features; the build here is
+  already proven); the architect confirms.
+- The probe on the **test DC** with a network grant (`authorizationStateWaitPhoneNumber`),
+  and the memory of a logged-in client.
 
 ### Part 3 — `tgd` on the host (tgclient + this repository; can start now, in parallel with 1–2)
 
@@ -188,10 +178,10 @@ TGS stickers (rlottie, C++), WebM stickers (libvpx), voice notes (Opus + R9), GI
 
 | Part | Can start | Waits for |
 |---|---|---|
-| 1 TDLib | **now** (C++ stage is tagged) | — |
-| 2 `_tdjson` + `python3` | after 1 | R1 makes it clean |
+| 1 TDLib | **done** (TG-02) | — |
+| 2 `_tdjson` + `python3` | **done** (TG-02) | R1 makes it clean |
 | 3 `tgd` on the host | **now** | architect's go-ahead for `tgclient/vm/` |
-| 4 `tgd` on Zoraya | after 2 and 3 | R2, R8 nice to have; 10h not needed (`tgd` is the line's program) |
+| 4 `tgd` on Zoraya | its first step (file-lock patch, WAL, test-DC login, TDLib pin) **now**; the rest after 3 | R2, R8 nice to have; 10h not needed (`tgd` is the line's program) |
 | 5 `tg-term` | host work after 3's protocol | **stage 10 10a–10d** to run on Zoraya |
 | 6 rest of logic | after 3 | — |
 | 7 window | after 5 | **R4** (or R3), R7, R12 |
@@ -199,8 +189,7 @@ TGS stickers (rlottie, C++), WebM stickers (libvpx), voice notes (Opus + R9), GI
 
 TASK-33 (browser-engine foundations, proposed ADR-0410 to 0421 on `origin/adr/browser-engine`,
 §3): **nothing here waits for it**, but several parts get simpler when it lands:
-- F1 (`poll`, in-process `eventfd`): part 1 drops its event-fd patch and uses TDLib's `poll`
-  back end;
+- F1 (`poll`, in-process `eventfd`): TG-02's `poll` shim and pipe event-fd patch can go;
 - F4 (`posix_spawn` with a grant list): part 3/4's fork-and-exec becomes a spawn, and the
   front end is given no network by rule;
 - F7 (socket files in a program's own directory): `tgd` can run in the background and
@@ -234,15 +223,17 @@ backlog** (`c28fecf`); R11 and R12 are covered by TASK-33's proposals (F2, E5).
 
 ## First part to start
 
-**Part 1 (TDLib for Zoraya).** It carries the largest unknown (TDLib's portability layer
-against libposix, its memory on a 512 MiB guest), needs nobody's go-ahead and no stage 10
-part, and everything else stands on it. Part 3 can run beside it on the host once the
-architect agrees to the `tgclient/vm/` split.
+Parts 1 and 2 are done (TG-02). Next, two things side by side:
+- **Part 4's first step** (this repository, now): the `TD_ZORAYA` file-lock patch, a
+  database opened in WAL or exclusive mode, the TDLib pin settled with tgclient, and a login
+  on the test DC inside Zoraya with the `+net` prefix grants — the remaining unknowns of
+  TDLib on Zoraya, and the memory of a logged-in client.
+- **Part 3** (`tgd` on the host), once the architect agrees to the `tgclient/vm/` split.
 
 ## Risks
 
 - **Memory**: TDLib with its message database on a large account, in a system without
-  demand paging; measured in parts 1 and 4. Fallback: `use_message_database = false`
+  demand paging; measured in part 4. Fallback: `use_message_database = false`
   (slower history, less disk and memory).
 - **Single CPU, `no-asm` OpenSSL**: MTProto crypto and JSON on one core under QEMU TCG may be
   slow at login (initial sync); measured in part 4.
