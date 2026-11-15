@@ -4,9 +4,9 @@
 
 | | |
 |---|---|
-| **Result** | **Stage A: MEMORY-AND-SECOND-RUNS-PENDING.** The window `tg` with its built-in sample backend runs inside Zoraya from the dock; the design and the protocol are in `docs/tg-window.md`. |
+| **Result** | **Stage A is done.** The window `tg` with its built-in sample backend runs inside Zoraya from the dock; the design and the protocol are in `docs/tg-window.md`. |
 | What works | The chat list (initials, name, last line, time, unread count, pinned, muted) as a window of the backend's rows, scrolled by the wheel and the keys; the chat view (bubbles in and out, replies, forwards, edited, dates, links, bold and code, service lines; photos, stickers, voice and files as labelled placeholders), anchored at the newest message, older pages loaded on the way up; the composer (several lines, Enter sends, Shift+Enter a line, replies); search; the AI summary card with three scopes, its text arriving in parts; the login (phone, code, a password drawn as dots); settings and log out; light and dark; scale 1 and 2; one pane in a narrow window; every control by Tab and keys; selection of whole messages and copy (System+C); paste (System+V). New messages, confirmations and read marks come from the sample's timers as the protocol's diffs. |
-| Tests | `make test-tg-host`: 30 host tests (the model over the sample backend, the list's diffs over 600 random steps, the widgets through `zoraya-ui`'s window at both scales in both themes). `make test-tg-window`: `tests/tg-window.script`, 96 steps under HVF through Zoraya's GUI test runner, at scale 1 and at scale 2. |
+| Tests | `make test-tg-host`: 30 host tests (the model over the sample backend, the list's diffs over 600 random steps, the widgets through `zoraya-ui`'s window at both scales in both themes). `make test-tg-window`: `tests/tg-window.script`, 95 steps under HVF through Zoraya's GUI test runner, at scale 1 and at scale 2: **PASS**, each scale twice. |
 | Screens | `docs/shots/tg-*.png` (scale 1, 1024 × 768) and `tg-*@2x.png` (scale 2, 2048 × 1536); synthetic data only. |
 | Zoraya | `origin/main` at `3292aa28`, as the local clone `../zoraya-tgw` with no remote; two overlay patches (16 changed lines). Nothing of this is in the public repository. |
 | Requests | `docs/requests.md`: R20, R21, R22 new. |
@@ -65,11 +65,33 @@ serial line (`tg`'s own words) and by pixels:
 | The window resizes | its right edge dragged: `tg: size 720 520` |
 | Also | the login with a refusal and the hidden password; older pages (`tg: older 40, 80 loaded, more`); the summary from the keyboard (`running`, `done`); settings' switch off and on |
 
-Runs: SEE-RUNS.
+Runs (2026-11-15, the M1 Air, QEMU under HVF, `--mem 512M`): scale 1 **PASS** twice and scale 2 **PASS** twice (95
+steps; the first pass of each scale was 94 steps, before the step that brings `tg` in front of the settings window
+for the dark screen was added). The first passes of scale 1's last check and of scale 2 ran while another task's
+guest was running on the machine (my mistake: the run was not gated on a free machine); the second passes ran alone.
+The very first run stopped at the resize (the drag began 2 pixels outside the frame) and the next at the dark check
+(it looked at a pixel under the settings window); both were the script's.
 
 ## Measurements
 
-MEASUREMENTS.
+| | Scale 1 (840 × 520) | Scale 2 (1680 × 1040 pixels) |
+|---|---|---|
+| A frame while scrolling a long chat with the wheel (the whole window painted: 80 to 153 messages loaded, about a dozen bubbles in view), mean of 50 | 1.9 ms (1.86 to 1.92 over eight reports in two runs) | 6.5 ms (6.3 to 7.0; 8.3 in the run that shared the machine) |
+| The longest such frame | 2.1 to 4.4 ms | 7.3 ms in one batch of 50, 16.9 ms in the other |
+| A frame of the login and the chat list (the first 50 frames of a run) | 0.8 ms mean | 3.0 ms mean |
+| The first frame after a new tree with 153 messages (all laid out again) | up to 11 ms | up to 19 ms (in the run that shared the machine) |
+
+A frame is `tg`'s own paint of its whole tree (from the root's paint to after the last widget's), measured in the
+program with the monotonic clock and said on the serial line every 50 frames (`tg: paint 50 frames: mean … us,
+longest … us`); the commit and the compositor's composition are not in it. The program is built as Zoraya's user
+programs are (`opt-level = 1`).
+
+**Memory**: **4 313 K** (4.2 MiB) in `top`, for `tg` alone in a room with a 96 MiB limit, at scale 1, logged in to
+the sample, with the long chat's 153 messages loaded and laid out (`make measure-tg-memory`,
+`tests/tg-memory.script`; the screen is `docs/shots/tg-memory-top.png`). That holds its 1.7 MB window buffer, the
+fonts' glyph caches and the whole sample account. Measured once.
+
+Sizes: `tg` 1 380 KiB; Zoraya's ramdisk with it 29.7 MB, the kernel image 38.5 MB.
 
 ## Known limits
 

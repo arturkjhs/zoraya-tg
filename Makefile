@@ -63,7 +63,7 @@ HOST_OPENSSL ?= $(shell brew --prefix openssl@3 2>/dev/null)
 logged = $(1) > $(LOGS)/$(2).log 2>&1 || { echo "$(2) failed: $(LOGS)/$(2).log"; tail -40 $(LOGS)/$(2).log; exit 1; }
 
 .PHONY: fetch td python root smoke clean wheels tgd host test-tgd-host smoke-tgd smoke-tgd-net run-tgd \
-	overlay test-tg-host tg tg-image test-tg-window run-tg
+	overlay test-tg-host tg tg-image test-tg-window measure-tg-memory run-tg
 .SUFFIXES:
 
 fetch: $(B)/src/$(TD_FILE)
@@ -352,6 +352,15 @@ test-tg-window: tg-image tests/tg-window.script tests/ppm2png.py
 	  [ $$rc = 0 ] || exit $$rc; \
 	  python3 tests/ppm2png.py $(ZTGW)/build/shots docs/shots $$label || exit 1; \
 	done
+
+# A measurement (docs/tg-window-report.md): tg alone in a room, `top` in the first terminal;
+# the screens mem-*.ppm stay in ZTGW's build/shots.
+measure-tg-memory: tg-image tests/tg-memory.script
+	( $(tgw_disk) && target/debug/zoraya-test-runner --timeout 300 --gui-script $(TG)/tests/tg-memory.script \
+	    --qmp build/tg-memory.qmp --label tg-memory -- \
+	    tools/run-qemu.sh --test --gui --gui-scale 1 --mem 512M --qmp build/tg-memory.qmp \
+	    --disk $(TGW_DISK) --accel hvf build/zoraya-kernel.elf ); rc=$$?; \
+	  cp $(ZTGW)/target/test-logs/tg-memory.log $(LOGS)/tg-memory.log 2>/dev/null; exit $$rc
 
 run-tg: tg-image
 	cd $(ZTGW) && tools/run-qemu.sh --gui --gui-scale $(or $(SCALE),2) --mem 512M --disk $(TGW_DISK) --accel hvf build/zoraya-kernel.elf
