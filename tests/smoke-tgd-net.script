@@ -1,0 +1,33 @@
+# TG-03 network smoke (make smoke-tgd-net): tgd inside Zoraya under HVF with the Internet
+# (run-qemu --net --net-open), started by the exact line of the report (tgd --grant, the
+# test DC). No account and no secret: a placeholder api id (1) and a public test number,
+# so Telegram's test DC answers API_ID_INVALID, which is the proof of a round trip through
+# the grant. Then the peak memory (status), a quit, and the line without +net refused.
+! panicked
+! first process ended
+! Traceback
+< Type help to begin, or help tour.
+< \r\n~>
+> mkdir tg\r
+< \r\n~>
+> grants @GRANT@\r
+< \r\n~>
+> @GRANT@ --json\r
+< "ev": "hello"
+< "state": "need_credentials"
+> {"op": "auth.credentials", "id": 1, "api_id": 1, "api_hash": "00000000000000000000000000000000"}\r
+< "re": 1, "ok": true
+< "state": "wait_phone"
+> {"op": "auth.phone", "id": 2, "value": "9996621234"}\r
+< "re": 2, "ok": true
+< "message": "API_ID_INVALID"
+> {"op": "status", "id": 3}\r
+< "re": 3, "ok": true
+> {"op": "quit", "id": 4}\r
+< "ev": "bye"
+< \r\n~>
+> status\r
+< succeeded (exit status 0)
+< \r\n~>
+x power off
+> poweroff\r

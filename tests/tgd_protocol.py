@@ -54,6 +54,6 @@ with tempfile.TemporaryDirectory() as data:
     check("exit status 0", p.wait(timeout=60) == 0)
     check("lock released", not os.path.exists(os.path.join(data, "tgd.lock")))
 grant = subprocess.run([tgd, "--grant"], capture_output=True, text=True, timeout=60).stdout
-check("grant line", grant.startswith("+net 91.108.56.0/22:443 ") and "+w ~/tg tgd" in grant)
+check("grant line", grant.startswith("+net 91.108.56.0/22:443 ") and "+w ~/tg python3 /usr/lib/tgd/tgd.py" in grant)
 print("protocol done" if not failures else f"protocol FAILED: {len(failures)}")
 sys.exit(1 if failures else 0)

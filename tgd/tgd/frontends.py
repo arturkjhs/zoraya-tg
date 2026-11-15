@@ -325,7 +325,8 @@ class TextFrontEnd:
                 _write(f"state {s['auth']} (TDLib {s['td'] or '-'}){', ' + me if me else ''}; "
                        f"TDLib {s['tdlib']} through {s['binding']}; "
                        f"{'test' if s['test_dc'] else 'production'} DC; "
-                       f"AI key {'set' if s['ai_key'] else 'not set'}\n")
+                       f"AI key {'set' if s['ai_key'] else 'not set'}; "
+                       f"peak memory {s['max_rss_kib'] // 1024} MiB\n")
             case "login":
                 await self._login()
             case "chats":

@@ -29,12 +29,18 @@ def ipv4_ranges() -> list[str]:
     return ranges
 
 
+COMMAND = "python3 /usr/lib/tgd/tgd.py"
+
+
 def grant_line(data: str = "~/tg", test_dc: bool = False, ai: bool = True) -> str:
     words = [f"+net {r}:{PORT}" for r in ipv4_ranges()]
     if ai:
         words.append(f"+net {OPENROUTER}:443")
     words.append(f"+w {data}")
-    words.append("tgd --test-dc" if test_dc else "tgd")
+    # python3 and not /bin/tgd: zosh gives a POSIX program a network connection only under a
+    # description the image carries (descriptions::POSIX), and the image describes python3,
+    # not tgd. /bin/tgd is the same program; it runs without +net (the refusal, the database).
+    words.append(COMMAND + (" --test-dc" if test_dc else ""))
     return " ".join(words)
 
 

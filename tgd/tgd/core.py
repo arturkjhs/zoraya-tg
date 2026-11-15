@@ -20,6 +20,7 @@ import dataclasses
 import json
 import logging
 import os
+import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -149,8 +150,12 @@ class PromptAuthUI:
         return await self._ask("phone", {})
 
     async def ask_code(self, code_info: dict[str, Any]) -> str:
-        kind = (code_info.get("type") or {}).get("@type", "")
-        return await self._ask("code", {"via": kind.removeprefix("authenticationCodeType")})
+        kind = code_info.get("type") or {}
+        return await self._ask("code", {
+            "via": kind.get("@type", "").removeprefix("authenticationCodeType"),
+            "length": kind.get("length", 0),
+            "next": (code_info.get("next_type") or {}).get("@type", "").removeprefix(
+                "authenticationCodeType")})
 
     async def ask_password(self, hint: str) -> str:
         return await self._ask("password", {"hint": hint})
@@ -620,7 +625,18 @@ class Core:
                 "tdlib": self.tdlib_version, "binding": self.binding, "test_dc": self.test_dc,
                 "credentials": self.credentials.complete,
                 "ai_key": bool(self.credentials.openrouter_key),
-                "open_chat": self.open_chat_id}
+                "open_chat": self.open_chat_id, "max_rss_kib": max_rss_kib()}
+
+
+def max_rss_kib() -> int:
+    """The process's peak resident memory in KiB (0 when the platform does not say)."""
+    try:
+        import resource  # noqa: PLC0415
+
+        rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    except Exception:  # noqa: BLE001
+        return 0
+    return rss // 1024 if sys.platform == "darwin" else rss  # bytes on macOS, KiB elsewhere
 
 
 class _LiveListener:
