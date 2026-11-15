@@ -2,7 +2,7 @@
 # (run-qemu --net --net-open), started by the exact line of the report (tgd --grant, the
 # test DC). No account and no secret: a placeholder api id (1) and a public test number,
 # so Telegram's test DC answers API_ID_INVALID, which is the proof of a round trip through
-# the grant. Then the peak memory (status), a quit, and the line without +net refused.
+# the grant. Then the memory (top, tgd stopped by Ctrl-Z), fg and a quit.
 ! panicked
 ! first process ended
 ! Traceback
@@ -12,6 +12,16 @@
 < \r\n~>
 > grants @GRANT@\r
 < \r\n~>
+# A room to count tgd's memory in (top counts rooms; the session's row says 0K).
+> room new tgdroom --mem 640M +w ~/tg\r
+< \r\n~>
+> room tgdroom\r
+< \r\ntgdroom
+# From ~: TDLib takes the realpath of the database directory, which needs ~ readable.
+> cd ~\r
+< \r\ntgdroom
+> top\r
+< \r\ntgdroom
 > @GRANT@ --json\r
 < "ev": "hello"
 < "state": "need_credentials"
@@ -23,11 +33,19 @@
 < "message": "API_ID_INVALID"
 > {"op": "status", "id": 3}\r
 < "re": 3, "ok": true
+# The memory with tgd connected and waiting for the phone: stopped (Ctrl-Z), top, fg.
+> \x1a
+< stopped
+< \r\ntgdroom
+> top\r
+< \r\ntgdroom
+> fg\r
+~ 2000 @@no such text@@
 > {"op": "quit", "id": 4}\r
 < "ev": "bye"
-< \r\n~>
+< \r\ntgdroom
 > status\r
 < succeeded (exit status 0)
-< \r\n~>
+< \r\ntgdroom
 x power off
 > poweroff\r

@@ -266,7 +266,7 @@ smoke-tgd: $(OUT)/root/.stamp tests/smoke-tgd.script
 # The network leg (needs the Internet): the exact line of the report (tgd --grant --test-dc,
 # made by the host tgd from the same CIDR list) put into the script; QEMU's network open.
 SMOKE_TGD_NET_DISK := $(B)/smoke/tgd-net-disk.img
-TGD_MEM ?= 512M
+TGD_MEM ?= 1G
 smoke-tgd-net: $(OUT)/root/.stamp tests/smoke-tgd-net.script tests/expand_script.py host
 	@mkdir -p $(B)/smoke $(LOGS)
 	python3 tests/expand_script.py tests/smoke-tgd-net.script "$$($(HOST_OUT)/bin/tgd --grant --test-dc)" > $(B)/smoke/smoke-tgd-net.script
