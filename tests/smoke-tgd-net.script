@@ -47,5 +47,16 @@
 > status\r
 < succeeded (exit status 0)
 < \r\ntgdroom
+# The text front end, as a person uses it: the credentials (placeholders) are found, status
+# says TDLib waits for the phone, quit.
+> @GRANT@\r
+< type help for the commands
+< Telegram asks for the phone number
+> status\r
+< state wait_phone
+< tgd>
+> quit\r
+< bye
+< \r\ntgdroom
 x power off
 > poweroff\r

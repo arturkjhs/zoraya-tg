@@ -78,6 +78,81 @@ database's busy wait); `mkdtemp` is POSIX.1-2008.
 makes a directory of mode 0700 whose name differs from the template, twice two different names; a template
 without six `X` fails with `EINVAL`.
 
+## R15: descriptions of POSIX programs from a port, at build time
+
+**What.** The image's list of trusted POSIX descriptions (`user/describe/posix/*.cmd`, compiled into the shell as
+`descriptions::POSIX`) takes extra `.cmd` files from a directory a port names at build time, as R1 does for
+built-in modules: `make ... EXTRA_DESCRIBE=DIR` with `program /bin/NAME` in each, for programs that
+`EXTRA_ROOT` puts in `/bin`.
+
+**Why.** The shell gives a POSIX program its `+net` words only under a description the image carries (ADR-0153
+rule 10, INV-0153-6; `posix_net_scope`): a ported program that is its own executable gets `+w` and `+r` from the
+line but never a network connection, and `grants` shows none, with no word saying why. Nothing on a volume should
+be read for it (that invariant stays); the description comes with the image build.
+
+**Until then.** The ported program runs as a script of the described interpreter (`python3 /usr/lib/NAME/NAME.py`),
+the same code; its own `/bin/NAME` runs only lines without `+net`. `image/describe/tgd.cmd` here is the
+description ready for the image.
+
+**Minimal test.** A port's `/bin/hello-net` (connects to the address of its operand, port 443, prints the errno)
+and its `.cmd` with `program /bin/hello-net`: `grants +net 192.0.2.1:443 hello-net 192.0.2.1` lists
+`net: 192.0.2.1:443 reach (grant +net)`, and the run gets past `EACCES`; without the `.cmd` both stay as today.
+
+## R16: `inet_pton(AF_INET6, ...)` in libc.a
+
+**What.** `inet_pton` parses IPv6 text (and `inet_ntop` writes it) instead of failing.
+
+**Why.** A ported network library parses its built-in IPv6 addresses at start and treats a failure as a bug
+(an assertion), even on a system where it will never connect over IPv6 (ADR-0225). Parsing is pure text; the
+system can stay IPv4-only for sockets.
+
+**Until then.** A patch per library: skip the IPv6 addresses on Zoraya (`patches/td/0005`).
+
+**Minimal test.** `inet_pton(AF_INET6, "2001:db8::1", &a)` returns 1 with the 16 bytes
+`20 01 0d b8 00 .. 00 01`; `"::ffff:1.2.3.4"` gives the mapped form; `"1::2::3"` returns 0; `inet_ntop` of each
+gives the canonical text back.
+
+## R17: `getrusage`'s `ru_maxrss`
+
+**What.** `getrusage(RUSAGE_SELF)` fills `ru_maxrss` (peak resident memory, KiB) from what the room keeper already
+counts for `top`.
+
+**Why.** A program reports its own memory (a status line, a test's budget) without a shell command; today the
+field is 0, and the only number is `top` inside a room (the session's row shows 0K outside one).
+
+**Until then.** Measured with `top` in a room, the program stopped by Ctrl-Z (`make smoke-tgd-net`).
+
+**Minimal test.** A C program allocates and touches 32 MiB; `ru_maxrss` before is below 16384 and after is at
+least 32768; `top` in a room shows a number within a few MiB of it.
+
+## R18: reading a line without echo
+
+**What.** A way for a program to read one line from the shell's stream without the shell showing it: a
+`termios` `ECHO` flag honoured on that stream, or a call that asks for one hidden line.
+
+**Why.** A program that asks for a password or a key at its own prompt has no terminal from zosh (ADR-0153); the
+shell echoes every key, so the secret stays on the screen and in a scrollback.
+
+**Until then.** The program says so at the prompt; on Zoraya credentials are typed visibly.
+
+**Minimal test.** A program turns echo off, reads a line, turns it on, prints the line's length: the typed keys do
+not appear, the length does, and the next line echoes again.
+
+## R19: the image's SQLite takes randomness from `getrandom`
+
+**What.** The SQLite in `python3` (`_sqlite3`) gets its random bytes from `getrandom` on Zoraya, as
+`patches/td/0004` does for a ported library's own SQLite.
+
+**Why.** SQLite's unix VFS opens `/dev/urandom`, which a program is not given, so the shell prints
+`hint: python3 tried to read /dev/urandom, which it was not given` on every run that opens a database, with a
+`+r /dev` suggestion that would give more than needed. SQLite falls back to the time and pid, so it works; the hint
+is noise and the fallback is weak.
+
+**Until then.** The hint is ignored.
+
+**Minimal test.** `+w ~/t python3 -c 'import sqlite3; sqlite3.connect("/home/t/x.db").execute("create table t(a)")'`
+prints no hint.
+
 ## Not requested
 
 - `bind`, `listen`, `accept`, `sendmsg`, `in6addr_any`: named by a ported library's server sockets, its
@@ -86,3 +161,7 @@ without six `X` fails with `EINVAL`.
   constant in `ports/tdshim.c`; see `docs/tdlib-report.md`.
 - `__unix__` predefined by `zcc`: a ported library that tests `__unix__` falls into its "unknown Unix" branch
   (here: `select` and `socketpair`), worse than naming Zoraya. Patched per library instead.
+- `getrandom` for a program another program starts (ADR-0310: by design). A ported interpreter's own launcher
+  that `exec`s it gets no random bytes, so the interpreter does not start; closed by linking the launcher's
+  `main` into the interpreter itself (`tgd/tgd_main.c`, `ports/tgd-link.mk`).
+- Starting a script by its `#!` line: the shell starts ELF programs only; closed the same way.

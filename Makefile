@@ -21,6 +21,7 @@
 #   make test-tgd-host   the protocol test on the host (no account)
 #   make smoke-tgd       tgd inside Zoraya under HVF (no account), build/logs/smoke-tgd.log
 #   make smoke-tgd-net   the same with the Internet and the report's line (no account)
+#   make run-tgd         Zoraya with the network, interactive, a kept disk (the hand check)
 #
 # ZORAYA is the Zoraya checkout used as toolchain and image, read-only but for
 # its build outputs; it must have run `make fetch-ports` and
@@ -53,7 +54,7 @@ HOST_OPENSSL ?= $(shell brew --prefix openssl@3 2>/dev/null)
 
 logged = $(1) > $(LOGS)/$(2).log 2>&1 || { echo "$(2) failed: $(LOGS)/$(2).log"; tail -40 $(LOGS)/$(2).log; exit 1; }
 
-.PHONY: fetch td python root smoke clean wheels tgd host test-tgd-host smoke-tgd smoke-tgd-net
+.PHONY: fetch td python root smoke clean wheels tgd host test-tgd-host smoke-tgd smoke-tgd-net run-tgd
 .SUFFIXES:
 
 fetch: $(B)/src/$(TD_FILE)
@@ -276,6 +277,18 @@ smoke-tgd-net: $(OUT)/root/.stamp tests/smoke-tgd-net.script tests/expand_script
 	cd $(ZORAYA) && target/debug/zoraya-test-runner --timeout $(SMOKE_TIMEOUT) --script $(B)/smoke/smoke-tgd-net.script --label tg-smoke-tgd-net -- \
 	  tools/run-qemu.sh --test --keys --net --net-open --mem $(TGD_MEM) --disk $(SMOKE_TGD_NET_DISK) --accel hvf build/zoraya-kernel.elf; rc=$$?; \
 	  cp target/test-logs/tg-smoke-tgd-net.log $(LOGS)/smoke-tgd-net.log; exit $$rc
+
+# For the architect's hand check (docs/tgd-report.md): Zoraya with the network, interactive, on a
+# disk that is kept between runs (build/run/tgd-disk.img: ~/tg and its database stay). FRESH=1
+# makes the disk again from out/root (after make tgd root), which loses ~/tg.
+RUN_TGD_DISK := $(B)/run/tgd-disk.img
+run-tgd: $(OUT)/root/.stamp
+	@mkdir -p $(B)/run
+	cd $(ZORAYA) && $(MAKE) build tools-storage
+	@if [ -n "$(FRESH)" ] || [ ! -f $(RUN_TGD_DISK) ]; then rm -f $(RUN_TGD_DISK) $(RUN_TGD_DISK).key; \
+	  cd $(ZORAYA) && EXTRA_ROOT=$(OUT)/root DISK_SIZE=384M tools/run-disk.sh $(RUN_TGD_DISK); fi
+	@echo "run-tgd: the line is in docs/tgd-report.md (or: tgd --grant); power off with poweroff"
+	cd $(ZORAYA) && tools/run-qemu.sh --net --mem $(TGD_MEM) --disk $(RUN_TGD_DISK) --accel hvf build/zoraya-kernel.elf
 
 clean:
 	rm -rf $(B)/work $(B)/host $(B)/td-zoraya $(B)/python-* $(B)/rootfs-python $(B)/obj $(B)/smoke $(OUT)

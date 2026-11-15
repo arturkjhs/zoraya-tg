@@ -325,8 +325,9 @@ class TextFrontEnd:
                 _write(f"state {s['auth']} (TDLib {s['td'] or '-'}){', ' + me if me else ''}; "
                        f"TDLib {s['tdlib']} through {s['binding']}; "
                        f"{'test' if s['test_dc'] else 'production'} DC; "
-                       f"AI key {'set' if s['ai_key'] else 'not set'}; "
-                       f"peak memory {s['max_rss_kib'] // 1024} MiB\n")
+                       f"AI key {'set' if s['ai_key'] else 'not set'}"
+                       + (f"; peak memory {s['max_rss_kib'] // 1024} MiB" if s["max_rss_kib"] else "")
+                       + "\n")
             case "login":
                 await self._login()
             case "chats":
@@ -386,6 +387,9 @@ class TextFrontEnd:
         core = self.core
         self._in_login = True
         try:
+            if not self._tty:
+                _write("(no terminal here: what you type, the api hash and a 2FA password too, "
+                       "is shown as typed)\n")
             if core.client is None:
                 _write("api id and hash from my.telegram.org (kept in the data directory)\n")
                 api_id = await self._ask("api id: ")
