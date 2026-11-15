@@ -122,11 +122,13 @@ then tg: setting ai.enabled on
 key esc
 #
 # Dark: Zoraya's settings window (the third window, 32 further right and down) turns
-# the theme, and tg follows at once: its header's ground is the dark bg.window.
+# the theme, and tg follows at once: its list's ground is the dark bg.view (1c1e22).
 click 502 722
 pause 1500
 click 217 267
 serial settings: Saved and applied.
-region 700 150 60 6 26282d
-pause 500
+region 107 300 4 40 1c1e22
+# tg in front again (a press on its title bar, right of the settings window).
+click 780 119
+pause 800
 shot tg-dark
