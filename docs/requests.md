@@ -153,6 +153,56 @@ is noise and the fallback is weak.
 **Minimal test.** `+w ~/t python3 -c 'import sqlite3; sqlite3.connect("/home/t/x.db").execute("create table t(a)")'`
 prints no hint.
 
+## R20: the parts of a native window program as crates of their own
+
+**What.** The heap of a native program (`user/src/heap.rs`), the platform of an application over the compositor's
+channel (`Gui` in `user/src/app.rs`), the file link and the chooser's client, in a crate (or crates) that depends on
+`zoraya-rt`, `zoraya-heap` and `zoraya-app` only, with the link script (`user/user.ld`) reachable from a build
+script; `zoraya-user` then uses them itself. This is R3's first half ("native programs built outside the image").
+
+**Why.** A native program outside the repository can name every `crates/` crate by path, but these live inside
+`zoraya-user`, which is every program of the ramdisk at once: depending on it builds the network stack, TLS and all
+the drivers, and needs the repository's `ring` patch and its C compiler wrapper in the outside workspace.
+
+**Until then.** The outside program carries its own copies (here `tg/tg/src/heap.rs` and `platform.rs`, about 190
+lines with two `unsafe` places) and a build script that names `user/user.ld` by path.
+
+**Minimal test.** A crate outside the repository with `zoraya-rt`, `zoraya-app` and the new crate as path
+dependencies builds for `aarch64-unknown-none` a program that opens a window with one label; `zoraya-elf-check`
+(or the ramdisk packer) accepts it; its dependency tree holds no network or driver crate.
+
+## R21: native programs from outside the repository in the image
+
+**What.** `make build EXTRA_PROGRAMS="PATH..."`: ELF files with the native mark, added to the ramdisk after the
+repository's own under their base names (the packer already checks the mark and an optional description). Later the
+same through the volume: a native program installed as ADR-0396 installs a POSIX one.
+
+**Why.** The program directory a launch looks in is the ramdisk inside the kernel image; `EXTRA_ROOT` adds only to
+the volume, where a native program is never looked for. There is no way to try a native program that is not in the
+repository's `USER_PROGRAMS`.
+
+**Until then.** `overlay/0001-extra-programs-in-the-ramdisk.patch` on a local clone (8 lines of the Makefile).
+
+**Minimal test.** A `hello`-like native ELF built outside, passed in `EXTRA_PROGRAMS`: the shell runs it by name;
+the ramdisk lists it; a file without the mark fails the build with the packer's message.
+
+## R22: a dock tile and a launch record for a program that is not one of the four
+
+**What.** The dock's list (`zoraya_panel::APPS`, a table of four) takes more names at build time (`EXTRA_APPS="NAME
+..."`), and later from the records of installed programs (ADR-0396): each gets the launch record of an application
+(the console, its compositor channel, the chooser, its data directory), a tile with its initial, and its windows'
+pills. Also a way to start a window program from a terminal by its name (`room NAME APP` exists as a line on the
+tile, but `zosh` starts no window program).
+
+**Why.** A window program is launched only by the panel, and the panel launches only what its table names.
+
+**Until then.** `overlay/0002-extra-applications-in-the-dock.patch` (a function beside the table, read from the
+build's environment); the program starts from the dock only, not from a terminal.
+
+**Minimal test.** With `EXTRA_APPS=demo` and a `demo` program in the ramdisk: the dock shows a fifth tile with `D`,
+a press opens its window with the pill `+w /data/home/demo`, a second press raises it, and in a room it opens with
+the room's grants; without the variable the dock is as today.
+
 ## Not requested
 
 - `bind`, `listen`, `accept`, `sendmsg`, `in6addr_any`: named by a ported library's server sockets, its

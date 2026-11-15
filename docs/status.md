@@ -1,13 +1,15 @@
-# Status (TG-03)
+# Status (TG-04, stage A)
 
-2026-11-15: everything that needs no account is done and tested (`docs/tgd-report.md`):
-`make test-tgd-host`, `make smoke-tgd` (55 steps, run twice and again), `make smoke-tgd-net`
-(78 steps: the exact line, `grants`, a round trip to Telegram's test DC, memory 72 MiB at
-`wait_phone`, the text front end), the data kept across a reboot.
+2026-11-15: the window `tg` with its sample backend is written, tested on the host (`make test-tg-host`, 30 tests)
+and running inside Zoraya from the dock (`make tg-image`, `make run-tg`); the design is `docs/tg-window.md`, the
+report `docs/tg-window-report.md`.
 
-The test-number login is impossible: Telegram disabled test accounts (tdlib/td#3083,
-2026-01-05), so `PHONE_CODE_INVALID` for every `99966XYYYY`; not a tgd fault.
+In progress: `make test-tg-window` (the GUI script under HVF at scale 1 and 2, run twice), the screens in
+`docs/shots/`, and the measurements (memory in `top`, frame time while scrolling).
 
-**Waiting for the architect:** the real-account login, by hand, on the host and then inside
-Zoraya (`make run-tgd`), with the steps in `docs/tgd-report.md`; then the logged-in memory
-goes in its status block.
+Zoraya's source for this task is the local clone `../zoraya-tgw` (no remote), at `overlay/BASE` with `overlay/*.patch`.
+
+**Still waiting for the architect (TG-03):** the real-account login, by hand, on the host and then inside Zoraya
+(`make run-tgd`), with the steps in `docs/tgd-report.md`.
+
+**Stage B waits for** 10g, 10j, F2 and F7 in Zoraya's `origin/main`.

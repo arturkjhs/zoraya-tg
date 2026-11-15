@@ -1,0 +1,44 @@
+# A measurement, not a test (docs/tg-window-report.md): tg's memory as `top` shows it.
+# `top` counts rooms, so tg is launched alone in a room with a memory limit, logged in,
+# a long chat opened and scrolled to its start (every page loaded and laid out), and the
+# first terminal's `top` is kept as a screen. Scale 1; with one room the dock's tiles are
+# 26 further left (tg 526) and the room's chip is at 678.
+serial init: gui: gpu on its own page
+screen Type help to begin, or help tour.
+screen ~> _
+type mkdir tgroom\r
+screen ~> _
+type room new tgroom --mem 96M +w ~/tgroom\r
+screen ~> _
+pause 2000
+shot mem-dock
+click 678 722
+pause 1000
+click 526 722
+serial tg: login phone
+pause 1500
+click 500 119
+pause 500
+type 0000\r
+then tg: login code
+type 12345\r
+then tg: login password
+type zoraya\r
+then tg: ready
+pause 1000
+click 255 217
+then tg: opened "Zoraya — розробка":
+wheel 700 350 up 30
+then tg: older 40, 80 loaded, more
+wheel 700 350 up 30
+serial tg: older 40, 120 loaded, more
+wheel 700 350 up 40
+serial tg: older 33, 153 loaded
+pause 1000
+shot mem-window
+# The first terminal again (its title bar's left end), and top.
+click 300 87
+pause 800
+type top\r
+pause 2500
+shot mem-top

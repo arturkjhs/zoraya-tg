@@ -1,0 +1,132 @@
+# TG-04 stage A: the window `tg` with its sample backend, under HVF, through Zoraya's
+# GUI test runner (make test-tg-window, at scale 1 and at scale 2). The sample's data is
+# synthetic, so tg says on the serial line what it shows, and the script reads that; the
+# pixels it checks are the tokens' colours. Coordinates are logical: the dock's tiles at
+# y 722 (term 352, files 402, edit 452, settings 502, tg 552: five tiles, no room
+# chips); tg is the second window, its body at (105, 138), 840 x 520: the list's rows at
+# y = 186 + 62 n, the chat from x 406, the composer at the bottom.
+# Colours: bg.selection dfe4ec (dark 3a4152), bg.window f7f7f8 (dark 26282d).
+serial init: gui: gpu on its own page
+screen Type help to begin, or help tour.
+screen ~> _
+#
+# From the dock; the compositor draws its frame. Focused by a click on its title bar.
+click 552 722
+serial tg: login phone
+serial tg: size 840 520
+pause 1500
+click 500 119
+pause 500
+shot tg-login
+# The login: a number the sample refuses, then phone, code and password (drawn as dots).
+type abc\r
+then tg: login refused: PHONE_NUMBER_INVALID
+type 0000\r
+then tg: login code
+type 12345\r
+then tg: login password
+type zoraya
+pause 500
+shot tg-password
+type \r
+then tg: ready
+serial tg: chats 27 from 0: "Zoraya — розробка" "Saved Messages"
+#
+# The sample's timer: a message four seconds after the login raises a chat's unread
+# count (2 to 3) and moves it up, to the third row.
+serial tg: chat "Оксана Коваль" unread 3: Нагадую: зустріч о 15:30, кімната 4.
+pause 500
+shot tg-list
+#
+# The list scrolls with the wheel (three rows a notch) and with the keys.
+wheel 250 400 down 1
+then tg: chats 27 from 3:
+wheel 250 400 up 1
+then tg: chats 27 from 0:
+key end
+then tg: chats 27 from 20:
+key home
+then tg: chats 27 from 0:
+#
+# A press opens the third row's chat: its messages, with Cyrillic; the row is marked
+# (bg.selection at its right end, light), and something is drawn in the messages.
+click 255 341
+then tg: opened "Оксана Коваль": 14 messages, last: Нагадую: зустріч о 15:30, кімната 4.
+then tg: chat "Оксана Коваль" unread 0: Нагадую: зустріч о 15:30, кімната 4.
+region 385 312 14 3 dfe4ec
+ink 420 200 500 380 f7f7f8 3000
+pause 500
+shot tg-chat
+#
+# A typed message is in the view and in the list's last line; then it is confirmed.
+type hello from Zoraya\r
+then tg: message "Оксана Коваль" out: hello from Zoraya
+then tg: chat "Оксана Коваль" unread 0: hello from Zoraya
+then tg: delivered: hello from Zoraya
+# The timer's later messages: one to a chat that is not open (its count rises), one to
+# the open chat (it shows in the view).
+serial tg: chat "Иван Соколов" unread 1: Отчёт отправил, посмотри, когда будет время.
+serial tg: message "Оксана Коваль": І візьми, будь ласка, зарядку.
+pause 500
+shot tg-sent
+#
+# Search filters the list; Escape clears it.
+click 200 162
+pause 300
+type book
+then tg: search "book"
+then tg: chats 1 from 0: "Book club"
+pause 300
+shot tg-search
+key esc
+then tg: chats 27 from 0:
+#
+# A long chat: the wheel over the messages scrolls them and brings older pages in; the
+# paint times are said every fifty frames.
+click 255 217
+then tg: opened "Zoraya — розробка":
+wheel 700 350 up 30
+then tg: older 40, 80 loaded, more
+wheel 700 350 down 30
+wheel 700 350 up 30
+wheel 700 350 down 30
+serial tg: paint 50 frames: mean
+pause 500
+shot tg-group
+#
+# The summary's card, from the keyboard: Tab from the composer to Send, to the card...
+# the Summary button is one Shift+Tab before the composer.
+chord shift tab
+key ret
+then tg: summary unread running:
+serial tg: summary unread done:
+pause 300
+shot tg-summary
+key esc
+#
+# The window resizes: its right edge dragged 120 to the left.
+drag 943 400 823 400
+then tg: size 7
+pause 500
+shot tg-resized
+#
+# Settings: the backend's switches; Escape goes back.
+click 370 162
+then tg: settings
+pause 300
+shot tg-settings
+key spc
+then tg: setting ai.enabled off
+key spc
+then tg: setting ai.enabled on
+key esc
+#
+# Dark: Zoraya's settings window (the third window, 32 further right and down) turns
+# the theme, and tg follows at once: its header's ground is the dark bg.window.
+click 502 722
+pause 1500
+click 217 267
+serial settings: Saved and applied.
+region 700 150 60 6 26282d
+pause 500
+shot tg-dark

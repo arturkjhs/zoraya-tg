@@ -745,9 +745,15 @@ impl SampleBackend {
         let Some(c) = self.chat(chat) else { return };
         let within = |secs: i64| c.messages.iter().filter(|m| now - m.date <= secs).count();
         let (n, what) = match scope {
-            Scope::Unread => (c.unread_at_open as usize, "unread messages"),
-            Scope::Day => (within(86_400), "messages of the last day"),
-            Scope::Week => (within(7 * 86_400), "messages of the last week"),
+            Scope::Unread => (c.unread_at_open as usize, "unread"),
+            Scope::Day => (within(86_400), "of the last day"),
+            Scope::Week => (within(7 * 86_400), "of the last week"),
+        };
+        let what = match (scope, n) {
+            (Scope::Unread, 1) => String::from("unread message"),
+            (Scope::Unread, _) => String::from("unread messages"),
+            (_, 1) => format!("message {what}"),
+            _ => format!("messages {what}"),
         };
         let title = c.row.title.clone();
         let parts = if n == 0 {
