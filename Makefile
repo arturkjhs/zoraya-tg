@@ -23,6 +23,14 @@
 #   make smoke-tgd-net   the same with the Internet and the report's line (no account)
 #   make run-tgd         Zoraya with the network, interactive, a kept disk (the hand check)
 #
+# The window (docs/tasks/TG-04-window.md, docs/tg-window.md, docs/tg-window-report.md):
+#   make test-tg-host    the host tests of tg/window (the model, the sample backend, the widgets)
+#   make tg              the native program, built here against ZTGW's crates by path
+#   make overlay         overlay/*.patch applied to ZTGW (once; ZTGW must have no remote)
+#   make tg-image        ZTGW's kernel with tg in its ramdisk and in the dock, and the volume
+#   make test-tg-window  the window under HVF through Zoraya's GUI test runner, at scale 1 and 2
+#   make run-tg          Zoraya's desktop with tg in the dock, interactive
+#
 # ZORAYA is the Zoraya checkout used as toolchain and image, read-only but for
 # its build outputs; it must have run `make fetch-ports` and
 # `make -f ports/Makefile cxx zlib openssl python`.
@@ -54,7 +62,8 @@ HOST_OPENSSL ?= $(shell brew --prefix openssl@3 2>/dev/null)
 
 logged = $(1) > $(LOGS)/$(2).log 2>&1 || { echo "$(2) failed: $(LOGS)/$(2).log"; tail -40 $(LOGS)/$(2).log; exit 1; }
 
-.PHONY: fetch td python root smoke clean wheels tgd host test-tgd-host smoke-tgd smoke-tgd-net run-tgd
+.PHONY: fetch td python root smoke clean wheels tgd host test-tgd-host smoke-tgd smoke-tgd-net run-tgd \
+	overlay test-tg-host tg tg-image test-tg-window run-tg
 .SUFFIXES:
 
 fetch: $(B)/src/$(TD_FILE)
@@ -289,6 +298,63 @@ run-tgd: $(OUT)/root/.stamp
 	  cd $(ZORAYA) && EXTRA_ROOT=$(OUT)/root DISK_SIZE=384M tools/run-disk.sh $(RUN_TGD_DISK); fi
 	@echo "run-tgd: the line is in docs/tgd-report.md (or: tgd --grant); power off with poweroff"
 	cd $(ZORAYA) && tools/run-qemu.sh --net --mem $(TGD_MEM) --disk $(RUN_TGD_DISK) --accel hvf build/zoraya-kernel.elf
+
+# ---------------------------------------------------------------- the window (TG-04)
+
+# ZTGW: a local clone of Zoraya with no remote, beside this repository, at the commit in
+# overlay/BASE, with overlay/*.patch applied (nothing of this repository can be pushed from
+# it). The crates of tg/ name it by path (../zoraya-tgw), so it is not a variable there.
+ZTGW := $(abspath ../zoraya-tgw)
+TG_ELF := $(TG)/target/aarch64-unknown-none/user/tg
+TGW_DISK := $(B)/tgw/disk.img
+TGW_SCALES ?= 1 2
+TGW_TIMEOUT ?= 420
+# What the volume carries besides Zoraya's rootfs: tgd's part when it is built (stage B's
+# image), nothing otherwise.
+TGW_EXTRA_ROOT := $(if $(wildcard $(OUT)/root/.stamp),$(OUT)/root,)
+TGW_DISK_SIZE := $(if $(TGW_EXTRA_ROOT),384M,64M)
+# A fresh volume for a run, through Zoraya's run-disk.sh.
+tgw_disk = rm -f $(TGW_DISK) $(TGW_DISK).key && cd $(ZTGW) && EXTRA_ROOT=$(TGW_EXTRA_ROOT) DISK_SIZE=$(TGW_DISK_SIZE) tools/run-disk.sh $(TGW_DISK)
+
+overlay:
+	@[ -d $(ZTGW)/.git ] || { echo "overlay: no Zoraya clone at $(ZTGW) (docs/tasks/TG-04-window.md)"; exit 1; }
+	@[ -z "$$(git -C $(ZTGW) remote)" ] || { echo "overlay: $(ZTGW) has a remote; it must have none"; exit 1; }
+	@for p in overlay/*.patch; do \
+	  if git -C $(ZTGW) apply --reverse --check $(TG)/$$p 2>/dev/null; then echo "overlay: $$p is applied"; \
+	  else git -C $(ZTGW) apply $(TG)/$$p && echo "overlay: applied $$p" || exit 1; fi; done
+
+test-tg-host:
+	CARGO_BUILD_JOBS=$(JOBS) cargo test -p tg-window
+
+tg:
+	CARGO_BUILD_JOBS=$(JOBS) cargo build -p tg --target aarch64-unknown-none --profile user
+	@echo "tg: $$(wc -c < $(TG_ELF) | awk '{ printf "%d", $$1 / 1024 }') KiB"
+
+# Zoraya's kernel with tg in its ramdisk (EXTRA_PROGRAMS) and in the dock (EXTRA_APPS), its
+# storage tools and its test runner; then the volume.
+tg-image: tg overlay
+	cd $(ZTGW) && CARGO_BUILD_JOBS=$(JOBS) $(MAKE) build tools-storage EXTRA_PROGRAMS=$(TG_ELF) EXTRA_APPS=tg && \
+	  CARGO_BUILD_JOBS=$(JOBS) cargo build -q -p zoraya-test-runner
+	@mkdir -p $(B)/tgw $(LOGS)
+	$(tgw_disk)
+
+# The script plays at each scale on a fresh volume; its screens (build/shots of ZTGW, PPM)
+# become docs/shots/*.png. One guest at a time.
+test-tg-window: tg-image tests/tg-window.script tests/ppm2png.py
+	@for scale in $(TGW_SCALES); do \
+	  label=tg-window-$$scale; \
+	  ( $(tgw_disk) && \
+	    target/debug/zoraya-test-runner --timeout $(TGW_TIMEOUT) --gui-script $(TG)/tests/tg-window.script \
+	      --qmp build/$$label.qmp --label $$label -- \
+	      tools/run-qemu.sh --test --gui --gui-scale $$scale --mem 512M --qmp build/$$label.qmp \
+	      --disk $(TGW_DISK) --accel hvf build/zoraya-kernel.elf ); rc=$$?; \
+	  cp $(ZTGW)/target/test-logs/$$label.log $(LOGS)/$$label.log 2>/dev/null; \
+	  [ $$rc = 0 ] || exit $$rc; \
+	  python3 tests/ppm2png.py $(ZTGW)/build/shots docs/shots $$label || exit 1; \
+	done
+
+run-tg: tg-image
+	cd $(ZTGW) && tools/run-qemu.sh --gui --gui-scale $(or $(SCALE),2) --mem 512M --disk $(TGW_DISK) --accel hvf build/zoraya-kernel.elf
 
 clean:
 	rm -rf $(B)/work $(B)/host $(B)/td-zoraya $(B)/python-* $(B)/rootfs-python $(B)/obj $(B)/smoke $(OUT)

@@ -1,0 +1,19 @@
+[package]
+name = "tg-window"
+description = "The Telegram window's logic and look: the protocol's types, the model, the sample backend and the zoraya-ui widgets."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+zoraya-paint = { path = "../../../zoraya-tgw/crates/zoraya-paint" }
+zoraya-text = { path = "../../../zoraya-tgw/crates/zoraya-text" }
+zoraya-tokens = { path = "../../../zoraya-tgw/crates/zoraya-tokens" }
+zoraya-ui = { path = "../../../zoraya-tgw/crates/zoraya-ui" }
+
+[dev-dependencies]
+zoraya-test-alloc = { path = "../../../zoraya-tgw/crates/zoraya-test-alloc" }
+
+[lints]
+workspace = true

@@ -1,0 +1,24 @@
+[package]
+name = "tg"
+description = "The Telegram window: a native Zoraya program over zoraya-app, with a built-in sample backend (stage A)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+tg-window = { path = "../window" }
+zoraya-abi = { path = "../../../zoraya-tgw/crates/zoraya-abi" }
+zoraya-rt = { path = "../../../zoraya-tgw/crates/zoraya-rt" }
+zoraya-heap = { path = "../../../zoraya-tgw/crates/zoraya-heap" }
+zoraya-app = { path = "../../../zoraya-tgw/crates/zoraya-app" }
+zoraya-tokens = { path = "../../../zoraya-tgw/crates/zoraya-tokens" }
+zoraya-ui = { path = "../../../zoraya-tgw/crates/zoraya-ui" }
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "tg"
+test = false
+bench = false

@@ -1,0 +1,34 @@
+# zoraya-tg's Rust part (docs/tasks/TG-04-window.md): the window `tg`, a native Zoraya
+# program built here against the crates of a Zoraya checkout beside this repository
+# (../zoraya-tgw: a local clone with no remote), by path.
+[workspace]
+resolver = "3"
+members = ["tg/window", "tg/tg"]
+# `cargo test` acts on the host-tested crate; the Makefile builds the program for Zoraya.
+default-members = ["tg/window"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+publish = false
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+undocumented_unsafe_blocks = "deny"
+
+# As Zoraya's user programs (its `user` profile): they go into the ramdisk.
+[profile.user]
+inherits = "release"
+opt-level = 1
+debug = false
+strip = true
+
+# The window's host tests paint whole windows at scale 2 through these.
+[profile.dev.package.zoraya-text]
+opt-level = 2
+
+[profile.dev.package.zoraya-paint]
+opt-level = 2

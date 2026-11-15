@@ -1,0 +1,26 @@
+diff --git a/Makefile b/Makefile
+index 6acca101..f2f26d19 100644
+--- a/Makefile
++++ b/Makefile
+@@ -85,6 +85,12 @@ USER_PROGRAMS := hello spin isolate badptr fuzz regs f_kread f_kwrite f_null f_p
+ 	busy zosh echo-args sleep exit-with fault fanout flood ticker handles stubborn requests probe t_console t_memory t_channels init t_devices t_loop chanbench blkd fsd \
+ 	crashwriter crashcheck fsbench t_storage gpud inputd compd term panel chooser t_open files settings edit t_gui guibench t_text \
+ 	ethd netd net fetch ping t_net t_netd t_streams t_snapshot t_image t_suspend t_quota t_thread t_bound t_cpu posixrun ls cat cp mv rm mkdir stat head find search date rngd rooms t_rooms memhog diskfill random broker ttyd
++# Native programs built outside this repository (ELF files with zoraya-rt's
++# mark, each stored under its base name), added to the ramdisk after the
++# repository's own; EXTRA_APPS names those of them the dock lists.
++EXTRA_PROGRAMS ?=
++EXTRA_APPS ?=
++export ZORAYA_EXTRA_APPS := $(EXTRA_APPS)
+ RUNNER := target/debug/zoraya-test-runner
+ RUN_QEMU := tools/run-qemu.sh
+ QEMU_TIMEOUT ?= 180
+@@ -114,7 +120,7 @@ $(RAMDISK):
+ 	$(CARGO) build -p zoraya-user --target $(TARGET) --profile user --target-dir target/user
+ 	$(CARGO) build -p zoraya-mkramdisk
+ 	@mkdir -p $(BUILD)
+-	target/debug/zoraya-mkramdisk --describe user/describe $@ $(addprefix $(USER_DIR)/,$(USER_PROGRAMS))
++	target/debug/zoraya-mkramdisk --describe user/describe $@ $(addprefix $(USER_DIR)/,$(USER_PROGRAMS)) $(EXTRA_PROGRAMS)
+ 
+ ramdisk: $(RAMDISK)
+ 

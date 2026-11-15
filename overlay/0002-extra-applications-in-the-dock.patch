@@ -1,0 +1,44 @@
+diff --git a/crates/zoraya-panel/src/lib.rs b/crates/zoraya-panel/src/lib.rs
+index adfc76fd..8f7c5004 100644
+--- a/crates/zoraya-panel/src/lib.rs
++++ b/crates/zoraya-panel/src/lib.rs
+@@ -213,6 +213,21 @@ pub const APPS: [(&str, &str); 4] = [
+     ("settings", "settings"),
+ ];
+ 
++/// Applications a build adds to the dock after [`APPS`]: the names in
++/// `ZORAYA_EXTRA_APPS` when this crate is built, separated by spaces, each
++/// launched by its name (programs the build adds to the ramdisk).
++pub const EXTRA_APPS: &str = match option_env!("ZORAYA_EXTRA_APPS") {
++    Some(names) => names,
++    None => "",
++};
++
++/// The dock's applications in order: [`APPS`], then [`EXTRA_APPS`].
++pub fn apps() -> Vec<(&'static str, &'static str)> {
++    let mut all = APPS.to_vec();
++    all.extend(EXTRA_APPS.split_whitespace().map(|n| (n, n)));
++    all
++}
++
+ /// The rights the settings window holds on `/config` narrowed to
+ /// `settings` (ADR-0169: read, write, create, publish, sync, clone).
+ pub const CONFIG_RIGHTS: u32 = zoraya_proto_file::rights::READ
+@@ -701,7 +716,7 @@ impl Panel {
+     /// `+` does nothing yet.
+     pub fn pressed(&mut self, kind: u32, index: u32) -> Action {
+         match kind {
+-            LAUNCH => match APPS.get(index as usize) {
++            LAUNCH => match apps().get(index as usize).copied() {
+                 // Nothing runs in an untrusted room until quotas exist
+                 // untrusted-gate: refusal (ADR-0268, `make check-untrusted-gate`)
+                 // (ADR-0056, TASK-24): `room new --untrusted` is refused, and
+@@ -756,7 +771,7 @@ fn rooms_text(rooms: &Rooms) -> String {
+ /// `SetDock`'s text: `NAME\tLINE` a line.
+ pub fn dock_text() -> String {
+     let mut s = String::new();
+-    for (name, line) in APPS {
++    for (name, line) in apps() {
+         s.push_str(&format!("{name}\t{line}\n"));
+     }
+     s
