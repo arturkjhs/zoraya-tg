@@ -454,5 +454,9 @@ impl Widget for Probe {
         m.stats.frames += 1;
         m.stats.total_us += us;
         m.stats.max_us = m.stats.max_us.max(us as u32);
+        if m.stats.mark {
+            m.stats.mark = false;
+            m.stats.first_us = Some(us as u32);
+        }
     }
 }

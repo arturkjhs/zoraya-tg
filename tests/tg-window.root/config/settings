@@ -1,0 +1,2 @@
+# The layouts tests/tg-window.script switches between (the default is us alone).
+gui.keyboard-layouts = us ua ru

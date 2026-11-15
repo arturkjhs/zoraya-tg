@@ -144,6 +144,13 @@ pub struct Stats {
     pub frames: u32,
     pub total_us: u64,
     pub max_us: u32,
+    /// The program sets `mark` when it puts a new tree in the window; the next frame's
+    /// time is then kept in `first_us`.
+    pub mark: bool,
+    pub first_us: Option<u32>,
+    /// Messages laid out by the last frame, and how many layouts are held.
+    pub laid: u32,
+    pub held: u32,
 }
 
 pub struct Model {
@@ -178,6 +185,10 @@ pub struct Model {
     rev: u32,
     /// Logical pixels the view is scrolled up from the newest message.
     pub scroll: i32,
+    /// The message at the view's top after the last paint: its id, its top from the
+    /// messages' top (logical), and `scroll` then. The view keeps it there when heights
+    /// around it change; it is here so that a new tree keeps it too.
+    pub anchor: Option<(Id, i32, i32)>,
     /// The keyboard's message and the other end of the selection, as indices.
     pub msg_cursor: Option<usize>,
     pub msg_anchor: Option<usize>,
@@ -243,6 +254,7 @@ impl Model {
             asked_older: false,
             rev: 0,
             scroll: 0,
+            anchor: None,
             msg_cursor: None,
             msg_anchor: None,
             reveal: false,
@@ -381,6 +393,7 @@ impl Model {
                 self.more = more;
                 self.asked_older = false;
                 self.scroll = 0;
+                self.anchor = None;
                 self.msg_cursor = None;
                 self.msg_anchor = None;
             }
@@ -701,6 +714,7 @@ impl Model {
         self.more = false;
         self.asked_older = false;
         self.scroll = 0;
+        self.anchor = None;
         self.msg_cursor = None;
         self.msg_anchor = None;
         self.composer.clear();

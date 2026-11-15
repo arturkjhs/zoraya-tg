@@ -30,7 +30,7 @@ pause 500
 shot tg-password
 type \r
 then tg: ready
-serial tg: chats 27 from 0: "Zoraya — розробка" "Saved Messages"
+serial tg: chats 28 from 0: "Zoraya — розробка" "Saved Messages"
 #
 # The sample's timer: a message four seconds after the login raises a chat's unread
 # count (2 to 3) and moves it up, to the third row.
@@ -40,13 +40,13 @@ shot tg-list
 #
 # The list scrolls with the wheel (three rows a notch) and with the keys.
 wheel 250 400 down 1
-then tg: chats 27 from 3:
+then tg: chats 28 from 3:
 wheel 250 400 up 1
-then tg: chats 27 from 0:
+then tg: chats 28 from 0:
 key end
-then tg: chats 27 from 20:
+then tg: chats 28 from 21:
 key home
-then tg: chats 27 from 0:
+then tg: chats 28 from 0:
 #
 # A press opens the third row's chat: its messages, with Cyrillic; the row is marked
 # (bg.selection at its right end, light), and something is drawn in the messages.
@@ -63,6 +63,25 @@ type hello from Zoraya\r
 then tg: message "Оксана Коваль" out: hello from Zoraya
 then tg: chat "Оксана Коваль" unread 0: hello from Zoraya
 then tg: delivered: hello from Zoraya
+# Cyrillic from the keyboard: System+Space goes to the next layout (us, ua, ru:
+# tg-window.root/config/settings), and a Ukrainian and a Russian message are typed, each
+# with its own letters (ї, і, ґ; ъ, ё, э); each is in the view and in the list's last line.
+chord meta spc
+layout ua
+type Привіт це їжак і ґанок
+key ret
+then tg: message "Оксана Коваль" out: Привіт це їжак і ґанок
+then tg: chat "Оксана Коваль" unread 0: Привіт це їжак і ґанок
+chord meta spc
+layout ru
+type Привет это съёмка и эхо
+key ret
+then tg: message "Оксана Коваль" out: Привет это съёмка и эхо
+then tg: chat "Оксана Коваль" unread 0: Привет это съёмка и эхо
+pause 500
+shot tg-cyrillic
+chord meta spc
+layout us
 # The timer's later messages: one to a chat that is not open (its count rises), one to
 # the open chat (it shows in the view).
 serial tg: chat "Иван Соколов" unread 1: Отчёт отправил, посмотри, когда будет время.
@@ -79,7 +98,7 @@ then tg: chats 1 from 0: "Book club"
 pause 300
 shot tg-search
 key esc
-then tg: chats 27 from 0:
+then tg: chats 28 from 0:
 #
 # A long chat: the wheel over the messages scrolls them and brings older pages in; the
 # paint times are said every fifty frames.

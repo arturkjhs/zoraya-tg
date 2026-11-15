@@ -63,7 +63,7 @@ HOST_OPENSSL ?= $(shell brew --prefix openssl@3 2>/dev/null)
 logged = $(1) > $(LOGS)/$(2).log 2>&1 || { echo "$(2) failed: $(LOGS)/$(2).log"; tail -40 $(LOGS)/$(2).log; exit 1; }
 
 .PHONY: fetch td python root smoke clean wheels tgd host test-tgd-host smoke-tgd smoke-tgd-net run-tgd \
-	overlay test-tg-host tg tg-image test-tg-window measure-tg-memory run-tg
+	overlay test-tg-host tg tg-image test-tg-window run-tg
 .SUFFIXES:
 
 fetch: $(B)/src/$(TD_FILE)
@@ -311,8 +311,10 @@ TGW_SCALES ?= 1 2
 TGW_TIMEOUT ?= 420
 # What the volume carries besides Zoraya's rootfs: tgd's part when it is built (stage B's
 # image), nothing otherwise.
-TGW_EXTRA_ROOT := $(if $(wildcard $(OUT)/root/.stamp),$(OUT)/root,)
-TGW_DISK_SIZE := $(if $(TGW_EXTRA_ROOT),384M,64M)
+TGW_ROOT := $(if $(wildcard $(OUT)/root/.stamp),$(OUT)/root:,)
+TGW_DISK_SIZE := $(if $(TGW_ROOT),384M,64M)
+# ... and the settings of the test (the keyboard's layouts: us, ua, ru).
+TGW_EXTRA_ROOT := $(TGW_ROOT)$(TG)/tests/tg-window.root
 # A fresh volume for a run, through Zoraya's run-disk.sh.
 tgw_disk = rm -f $(TGW_DISK) $(TGW_DISK).key && cd $(ZTGW) && EXTRA_ROOT=$(TGW_EXTRA_ROOT) DISK_SIZE=$(TGW_DISK_SIZE) tools/run-disk.sh $(TGW_DISK)
 
@@ -353,14 +355,16 @@ test-tg-window: tg-image tests/tg-window.script tests/ppm2png.py
 	  python3 tests/ppm2png.py $(ZTGW)/build/shots docs/shots $$label || exit 1; \
 	done
 
-# A measurement (docs/tg-window-report.md): tg alone in a room, `top` in the first terminal;
-# the screens mem-*.ppm stay in ZTGW's build/shots.
-measure-tg-memory: tg-image tests/tg-memory.script
-	( $(tgw_disk) && target/debug/zoraya-test-runner --timeout 300 --gui-script $(TG)/tests/tg-memory.script \
-	    --qmp build/tg-memory.qmp --label tg-memory -- \
-	    tools/run-qemu.sh --test --gui --gui-scale 1 --mem 512M --qmp build/tg-memory.qmp \
+# Measurements (docs/tg-window-report.md), not tests: make measure-tg-memory (tg alone in
+# a room, `top` in the first terminal) and make measure-tg-layout SCALE=1|2 (a chat of 1000
+# messages: the first frame of a new tree, the paint times). Their screens stay in ZTGW's
+# build/shots; the log is build/logs/tg-NAME.log.
+measure-tg-%: tg-image tests/tg-%.script
+	( $(tgw_disk) && target/debug/zoraya-test-runner --timeout 400 --gui-script $(TG)/tests/tg-$*.script \
+	    --qmp build/tg-$*.qmp --label tg-$* -- \
+	    tools/run-qemu.sh --test --gui --gui-scale $(or $(SCALE),1) --mem 512M --qmp build/tg-$*.qmp \
 	    --disk $(TGW_DISK) --accel hvf build/zoraya-kernel.elf ); rc=$$?; \
-	  cp $(ZTGW)/target/test-logs/tg-memory.log $(LOGS)/tg-memory.log 2>/dev/null; exit $$rc
+	  cp $(ZTGW)/target/test-logs/tg-$*.log $(LOGS)/tg-$*.log 2>/dev/null; exit $$rc
 
 run-tg: tg-image
 	cd $(ZTGW) && tools/run-qemu.sh --gui --gui-scale $(or $(SCALE),2) --mem 512M --disk $(TGW_DISK) --accel hvf build/zoraya-kernel.elf

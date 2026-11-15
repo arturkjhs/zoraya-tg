@@ -351,6 +351,28 @@ fn a_word_longer_than_a_line_is_cut_and_newlines_break() {
 }
 
 #[test]
+fn a_shape_from_its_corners_is_the_shape_from_one_mask() {
+    use zoraya_paint::{self as paint, Canvas};
+    use zoraya_tokens::shape;
+    let color = Appearance::Light.palette().accent;
+    for (w, h, radius, t) in [(200, 60, 12, 1), (97, 41, 6, 2), (300, 300, 24, 4), (64, 39, 12, 2), (20, 20, 12, 1)] {
+        let r = draw::rect(7, 5, w, h);
+        let size = ((w + 20) * (h + 20)) as usize;
+        let (mut a, mut b) = (vec![0xffffffu32; size], vec![0xffffffu32; size]);
+        let stride = (w + 20) as usize;
+        draw::round(&mut Canvas::new(&mut a, stride), r, radius, color);
+        let m = paint::rounded_rect(w as usize, h as usize, radius, shape::CORNER);
+        Canvas::new(&mut b, stride).mask(&m, r.x, r.y, color, 255);
+        assert!(a == b, "round {w} x {h}, radius {radius}");
+        let (mut a, mut b) = (vec![0xffffffu32; size], vec![0xffffffu32; size]);
+        draw::outline(&mut Canvas::new(&mut a, stride), r, radius, t, color);
+        let m = paint::rounded_outline(w as usize, h as usize, radius, t, shape::CORNER);
+        Canvas::new(&mut b, stride).mask(&m, r.x, r.y, color, 255);
+        assert!(a == b, "outline {w} x {h}, radius {radius}, {t} thick");
+    }
+}
+
+#[test]
 fn styles_follow_the_spans() {
     let r = sample::rich("a *b* `c` d");
     let s = draw::styles(&r);
@@ -436,7 +458,7 @@ fn the_list_holds_the_window_it_shows() {
     {
         let m = ui.model.borrow();
         assert_eq!(m.list_rows, rows);
-        assert_eq!(m.total, 27);
+        assert_eq!(m.total, 28);
         assert_eq!(m.first, 0);
         assert_eq!(m.chats.len() as u32, rows + 1);
         // The pinned ones first, the newest of them first; then the newest.
@@ -444,13 +466,13 @@ fn the_list_holds_the_window_it_shows() {
         assert_eq!(titles, ["Zoraya — розробка", "Saved Messages", "Марина Ткаченко"]);
         assert!(m.chats.windows(2).skip(2).all(|w| w[0].date >= w[1].date));
     }
-    assert!(ui.said("tg: chats 27 from 0: \"Zoraya — розробка\" \"Saved Messages\""));
+    assert!(ui.said("tg: chats 28 from 0: \"Zoraya — розробка\" \"Saved Messages\""));
     // The wheel: three rows a notch, the window follows.
     assert_eq!(ui.wheel(100, 200, 1), Response::Changed(crate::widgets::id::LIST));
     assert_eq!((ui.model.borrow().top, ui.model.borrow().first), (3, 3));
     ui.wheel(100, 200, 20);
     let m = ui.model.borrow();
-    assert_eq!(m.top, 27 - rows);
+    assert_eq!(m.top, 28 - rows);
     assert_eq!(m.chats.len() as u32, rows);
     drop(m);
     // At its end the list takes no more turns that way, and goes back.
@@ -473,9 +495,9 @@ fn the_keys_move_the_lists_row_and_enter_opens_it() {
     assert_eq!(ui.model.borrow().cursor, Some(9));
     assert_eq!(ui.model.borrow().top, 10 - rows);
     ui.key(keys::END);
-    assert_eq!(ui.model.borrow().cursor, Some(26));
+    assert_eq!(ui.model.borrow().cursor, Some(27));
     ui.key(key::PAGE_UP);
-    assert_eq!(ui.model.borrow().cursor, Some(26 - rows));
+    assert_eq!(ui.model.borrow().cursor, Some(27 - rows));
     ui.key(keys::HOME);
     assert_eq!((ui.model.borrow().cursor, ui.model.borrow().top), (Some(0), 0));
     ui.key(keys::DOWN);
@@ -608,7 +630,7 @@ fn search_filters_the_list_without_case() {
     assert_eq!(ui.model.borrow().total, 0);
     ui.key(keys::ESC);
     assert_eq!(ui.model.borrow().query.text, "");
-    assert_eq!(ui.model.borrow().total, 27);
+    assert_eq!(ui.model.borrow().total, 28);
     // Typing in the list searches.
     ui.focus(Role::List);
     ui.type_text("rust");
@@ -1064,6 +1086,155 @@ fn tab_reaches_every_control() {
             Role::Card(3),
         ]
     );
+}
+
+/// A chat with every page of its history loaded.
+fn whole(title: &str) -> Ui {
+    let mut ui = Ui::main();
+    ui.open(title);
+    while ui.model.borrow().more {
+        ui.model.borrow_mut().want_older();
+        ui.pump();
+    }
+    ui
+}
+
+/// The archive's thousand messages, all loaded.
+fn archive() -> Ui {
+    let ui = whole("Project archive");
+    assert_eq!(ui.model.borrow().messages.len(), sample::ARCHIVE);
+    ui
+}
+
+#[test]
+fn only_the_messages_near_the_view_are_laid_out() {
+    let mut ui = archive();
+    ui.paint();
+    let s = ui.model.borrow().stats;
+    // A view and half a view each way, of a thousand.
+    assert!(s.laid > 5 && s.laid < 40, "{} laid out by the first frame", s.laid);
+    assert_eq!(s.held, s.laid);
+    // The next frame lays out nothing; a page up, about a page.
+    ui.paint();
+    assert_eq!(ui.model.borrow().stats.laid, 0);
+    ui.focus(Role::Messages);
+    ui.key(key::PAGE_UP);
+    ui.paint();
+    let s = ui.model.borrow().stats;
+    assert!(s.laid > 0 && s.laid < 25, "{} laid out by a page", s.laid);
+    // The far end: again a view's worth, whatever lies between.
+    ui.key(keys::HOME);
+    ui.paint();
+    let s = ui.model.borrow().stats;
+    assert!(s.laid < 40 && s.held < 110, "{} laid out, {} held", s.laid, s.held);
+    // A new tree (the card) starts with no layouts and makes a view's worth.
+    ui.focus(Role::SummaryButton);
+    ui.key(keys::ENTER);
+    ui.paint();
+    let s = ui.model.borrow().stats;
+    assert!(s.laid < 40 && s.held == s.laid, "{} laid out, {} held", s.laid, s.held);
+}
+
+/// The message under a point of the messages (by a press there).
+fn message_at(ui: &mut Ui, x: i32, y: i32) -> Option<crate::proto::Id> {
+    ui.click(x, y);
+    let m = ui.model.borrow();
+    m.msg_cursor.map(|c| m.messages[c].row.id)
+}
+
+#[test]
+fn the_view_stays_on_its_messages_when_layouts_replace_estimates() {
+    // Short messages (the estimates are near), and long ones that wrap (they are not).
+    stays(archive(), 30, 5000);
+    stays(whole("Zoraya — розробка"), 6, 1500);
+}
+
+fn stays(mut ui: Ui, pages: usize, least: i32) {
+    ui.focus(Role::Messages);
+    // Far up, by pages: everything between was laid out on the way.
+    for _ in 0..pages {
+        ui.key(key::PAGE_UP);
+        ui.paint();
+    }
+    let scroll = ui.model.borrow().scroll;
+    assert!(scroll > least, "{scroll}");
+    // The messages at two places of the view (incoming ones are at the left).
+    let find = |ui: &mut Ui, from: i32| {
+        (from..from + 120)
+            .step_by(6)
+            .find_map(|y| message_at(ui, LIST_W + 40, y).map(|id| (y, id)))
+            .expect("a message there")
+    };
+    let top = find(&mut ui, 70);
+    let low = find(&mut ui, 300);
+    assert!(top.1 != low.1);
+    // A new tree forgets every layout: the messages under the view are estimates
+    // again, and the view must not move.
+    ui.model.borrow_mut().msg_cursor = None;
+    ui.focus(Role::SummaryButton);
+    ui.key(keys::ENTER);
+    ui.paint();
+    ui.key(keys::ESC);
+    ui.paint();
+    assert_eq!(message_at(&mut ui, LIST_W + 40, top.0), Some(top.1));
+    assert_eq!(message_at(&mut ui, LIST_W + 40, low.0), Some(low.1));
+    // Down a page and up a page: the same messages at the same places.
+    ui.model.borrow_mut().msg_cursor = None;
+    ui.focus(Role::Messages);
+    for code in [key::PAGE_DOWN, key::PAGE_DOWN, key::PAGE_UP, key::PAGE_UP] {
+        ui.key(code);
+        ui.paint();
+    }
+    assert_eq!(message_at(&mut ui, LIST_W + 40, top.0), Some(top.1));
+    assert_eq!(message_at(&mut ui, LIST_W + 40, low.0), Some(low.1));
+    // To the newest and the view is at its end again.
+    ui.key(keys::END);
+    ui.paint();
+    assert_eq!(ui.model.borrow().scroll, 0);
+}
+
+/// Times frames of the archive on the host (`cargo test --release -- --ignored timing
+/// --nocapture`): a look at where a frame's time goes.
+#[test]
+#[ignore]
+fn timing() {
+    let mut ui = archive();
+    ui.focus(Role::Messages);
+    let frame = |ui: &mut Ui, what: &str, n: u32| {
+        let t = std::time::Instant::now();
+        for _ in 0..n {
+            ui.paint();
+        }
+        println!("{what}: {:?} a frame", t.elapsed() / n);
+    };
+    frame(&mut ui, "first", 1);
+    frame(&mut ui, "at the newest", 200);
+    for _ in 0..20 {
+        ui.key(key::PAGE_UP);
+        ui.paint();
+    }
+    frame(&mut ui, "20 pages up", 200);
+    let t = std::time::Instant::now();
+    for i in 0..200 {
+        ui.wheel(600, 250, if i % 2 == 0 { -1 } else { 1 });
+        ui.paint();
+    }
+    println!("wheel and frame: {:?}", t.elapsed() / 200);
+    ui.key(keys::HOME);
+    frame(&mut ui, "at the oldest", 200);
+    // The chat with long messages: the wheel up and down over one stretch, and how many
+    // layouts each pass makes.
+    let mut ui = whole("Zoraya — розробка");
+    ui.paint();
+    for pass in 0..4 {
+        let (t, mut laid) = (std::time::Instant::now(), 0);
+        for _ in 0..30 {
+            ui.wheel(600, 250, if pass % 2 == 0 { -1 } else { 1 });
+            ui.paint();
+            laid += ui.model.borrow().stats.laid;
+        }
+        println!("pass {pass}: {:?} a frame, {laid} layouts", t.elapsed() / 30);
+    }
 }
 
 /// Writes the screens as PPM files when `TG_SHOTS` names a directory: a look at the

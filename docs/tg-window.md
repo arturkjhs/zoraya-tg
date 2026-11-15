@@ -84,6 +84,9 @@ the window what a screenful costs.
   November`) are centred pills in `text.caption`.
 - The view is anchored at the newest message. Scrolled up, it stays where it is when a message arrives; near the top
   it asks for the page before the oldest message it holds.
+- Only the messages in the view and half a view each way are laid out; the others stand at a height kept for them
+  (a layout's once they had one, else an estimate), and the message at the view's top is the anchor that keeps the
+  view still when those heights change. A chat of a thousand messages costs a frame what a screenful costs.
 
 ### The composer
 

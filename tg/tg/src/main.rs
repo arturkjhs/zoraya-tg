@@ -162,6 +162,7 @@ fn main() -> i32 {
             let tree = view::build(&model, clock_monotonic);
             built = model.borrow().tree;
             roles = tree.roles;
+            model.borrow_mut().stats.mark = true;
             app.replace(window, tree.root);
             let mut m = model.borrow_mut();
             if m.focus.is_none() {
@@ -194,6 +195,16 @@ fn main() -> i32 {
         for line in lines {
             println!("{line}");
         }
+        if synthetic && let Some(us) = stats.first_us {
+            let m = &mut *model.borrow_mut();
+            println!(
+                "tg: first frame of a new tree: {us} us, {} messages loaded, {} laid out, {} held",
+                m.messages.len(),
+                m.stats.laid,
+                m.stats.held
+            );
+            m.stats.first_us = None;
+        }
         if synthetic && stats.frames >= FRAMES_A_REPORT {
             println!(
                 "tg: paint {} frames: mean {} us, longest {} us",
@@ -201,7 +212,14 @@ fn main() -> i32 {
                 stats.total_us / u64::from(stats.frames),
                 stats.max_us
             );
-            model.borrow_mut().stats = Stats::default();
+            let m = &mut *model.borrow_mut();
+            m.stats = Stats {
+                mark: m.stats.mark,
+                first_us: m.stats.first_us,
+                laid: m.stats.laid,
+                held: m.stats.held,
+                ..Stats::default()
+            };
         }
         let deadline = backend
             .next_wake()

@@ -1,0 +1,105 @@
+# A measurement, not a test (docs/tg-window-report.md): the view's cost with a long
+# history. The sample's `Project archive` (1000 messages) is opened, every page loaded
+# (Home in the messages, 24 times), and then: a new tree three times over (the summary's
+# card opened and closed), whose first frame tg times, and the wheel over the messages
+# for the paint times. Scale as the run says.
+serial init: gui: gpu on its own page
+screen Type help to begin, or help tour.
+screen ~> _
+click 552 722
+serial tg: login phone
+pause 1500
+click 500 119
+pause 500
+type 0000\r
+then tg: login code
+type 12345\r
+then tg: login password
+type zoraya\r
+then tg: ready
+click 200 162
+pause 300
+type archive
+then tg: chats 1 from 0: "Project archive"
+key ret
+key ret
+then tg: opened "Project archive": 40 messages
+# From the composer back to the messages.
+chord shift tab
+chord shift tab
+key home
+then tg: older 40, 80 loaded
+key home
+then tg: older 40, 120 loaded
+key home
+then tg: older 40, 160 loaded
+key home
+then tg: older 40, 200 loaded
+key home
+then tg: older 40, 240 loaded
+key home
+then tg: older 40, 280 loaded
+key home
+then tg: older 40, 320 loaded
+key home
+then tg: older 40, 360 loaded
+key home
+then tg: older 40, 400 loaded
+key home
+then tg: older 40, 440 loaded
+key home
+then tg: older 40, 480 loaded
+key home
+then tg: older 40, 520 loaded
+key home
+then tg: older 40, 560 loaded
+key home
+then tg: older 40, 600 loaded
+key home
+then tg: older 40, 640 loaded
+key home
+then tg: older 40, 680 loaded
+key home
+then tg: older 40, 720 loaded
+key home
+then tg: older 40, 760 loaded
+key home
+then tg: older 40, 800 loaded
+key home
+then tg: older 40, 840 loaded
+key home
+then tg: older 40, 880 loaded
+key home
+then tg: older 40, 920 loaded
+key home
+then tg: older 40, 960 loaded
+key home
+then tg: older 40, 1000 loaded
+pause 1000
+# The card: a new tree, and another when it closes.
+key tab
+key ret
+then tg: first frame of a new tree:
+serial tg: summary unread done:
+key esc
+then tg: first frame of a new tree:
+chord shift tab
+key ret
+then tg: first frame of a new tree:
+serial tg: summary unread done:
+key esc
+then tg: first frame of a new tree:
+chord shift tab
+key ret
+then tg: first frame of a new tree:
+key esc
+then tg: first frame of a new tree:
+# At the oldest messages, then the wheel down and up for the paint times.
+wheel 700 350 down 30
+wheel 700 350 up 30
+wheel 700 350 down 30
+wheel 700 350 up 30
+wheel 700 350 down 30
+wheel 700 350 up 30
+pause 1000
+shot layout-1000

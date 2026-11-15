@@ -61,13 +61,42 @@ pub fn text(
     t.draw(&mut target, s, px, x, baseline, color)
 }
 
+/// The side of the square a corner of `radius` takes, if `r` has room for four of them
+/// and a middle; else the shape is drawn from one mask of its whole size.
+fn corner(r: paint::Rect, radius: u32) -> Option<i32> {
+    let s = paint::corner_span(shape::CORNER, radius) as i32 + 1;
+    (r.w >= 2 * s && r.h >= 2 * s).then_some(s)
+}
+
+/// Draws the four corners of `r` from `m`, a mask of the shape at `2s × 2s`: each
+/// quarter of it through a clip of that corner. A frame draws dozens of bubbles and
+/// boxes; this way none of them makes a mask of its own size.
+fn corners(c: &mut Canvas<'_>, m: &paint::Mask, r: paint::Rect, s: i32, color: Color) {
+    let old = c.clip;
+    for (cx, mx) in [(r.x, r.x), (r.right() - s, r.right() - 2 * s)] {
+        for (cy, my) in [(r.y, r.y), (r.bottom() - s, r.bottom() - 2 * s)] {
+            c.clip = rect(cx, cy, s, s).intersect(&old);
+            c.mask(m, mx, my, color, 255);
+        }
+    }
+    c.clip = old;
+}
+
 /// A filled shape with the tokens' corners.
 pub fn round(c: &mut Canvas<'_>, r: paint::Rect, radius: u32, color: Color) {
     if r.is_empty() {
         return;
     }
-    let m = paint::rounded_rect(r.w as usize, r.h as usize, radius, shape::CORNER);
-    c.mask(&m, r.x, r.y, color, 255);
+    let Some(s) = corner(r, radius) else {
+        let m = paint::rounded_rect(r.w as usize, r.h as usize, radius, shape::CORNER);
+        c.mask(&m, r.x, r.y, color, 255);
+        return;
+    };
+    c.fill(rect(r.x + s, r.y, r.w - 2 * s, r.h), color);
+    c.fill(rect(r.x, r.y + s, s, r.h - 2 * s), color);
+    c.fill(rect(r.right() - s, r.y + s, s, r.h - 2 * s), color);
+    let m = paint::rounded_rect(2 * s as usize, 2 * s as usize, radius, shape::CORNER);
+    corners(c, &m, r, s, color);
 }
 
 /// The outline of that shape, `t` pixels thick.
@@ -75,8 +104,18 @@ pub fn outline(c: &mut Canvas<'_>, r: paint::Rect, radius: u32, t: u32, color: C
     if r.is_empty() {
         return;
     }
-    let m = paint::rounded_outline(r.w as usize, r.h as usize, radius, t, shape::CORNER);
-    c.mask(&m, r.x, r.y, color, 255);
+    let ti = t as i32;
+    let Some(s) = corner(r, radius).filter(|s| *s >= ti) else {
+        let m = paint::rounded_outline(r.w as usize, r.h as usize, radius, t, shape::CORNER);
+        c.mask(&m, r.x, r.y, color, 255);
+        return;
+    };
+    c.fill(rect(r.x + s, r.y, r.w - 2 * s, ti), color);
+    c.fill(rect(r.x + s, r.bottom() - ti, r.w - 2 * s, ti), color);
+    c.fill(rect(r.x, r.y + s, ti, r.h - 2 * s), color);
+    c.fill(rect(r.right() - ti, r.y + s, ti, r.h - 2 * s), color);
+    let m = paint::rounded_outline(2 * s as usize, 2 * s as usize, radius, t, shape::CORNER);
+    corners(c, &m, r, s, color);
 }
 
 /// A filled circle in the square `r`.

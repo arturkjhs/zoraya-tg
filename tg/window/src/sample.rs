@@ -33,6 +33,9 @@ pub const READ_MS: u64 = 1800;
 /// A summary comes in parts this far apart.
 pub const SUMMARY_PART_MS: u64 = 300;
 
+/// The messages of the sample's longest chat, `Project archive`.
+pub const ARCHIVE: usize = 1000;
+
 const ME: &str = "You";
 
 struct Chat {
@@ -459,6 +462,18 @@ fn account() -> Vec<Chat> {
         let lines = talk(pools[*pool], 6 + i % 8, last_ago, others, i);
         b.chat(title, *kind, subtitle, *unread, false, *muted, &lines);
     }
+    // A thousand messages over two months, for the view's cost with a long history.
+    let mut lines: Vec<(i64, bool, &str, &str)> = Vec::new();
+    for i in 0..ARCHIVE {
+        let pool = pools[i % 3];
+        lines.push((
+            40_000 + (ARCHIVE - 1 - i) as i64 * 86,
+            i % 5 == 3,
+            team[i % 4],
+            pool[(i * 7 + i / 10) % 10],
+        ));
+    }
+    b.chat("Project archive", g, "12 members", 0, false, true, &lines);
     for c in &mut b.chats {
         // What is not read yet came from the others.
         let n = c.messages.len();

@@ -35,7 +35,6 @@ const REPLY_BAR: i32 = 30;
 /// A message laid out for one width and scale.
 struct Laid {
     rev: u32,
-    avail: i32,
     k: i32,
     w: i32,
     h: i32,
@@ -51,6 +50,20 @@ struct Laid {
     foot_w: i32,
 }
 
+/// What the view keeps of a message it is not showing: whose it is, its height (a
+/// layout's, or an estimate until it had one), and what stands above it.
+#[derive(Clone, Copy, Default)]
+struct Slot {
+    id: Id,
+    rev: u32,
+    h: i32,
+    /// The message before it when `above` and `day` were found.
+    before: Id,
+    /// The gap above it, and whether a day's line stands above that.
+    above: i32,
+    day: bool,
+}
+
 #[derive(Clone, Copy)]
 enum Item {
     Day(i64),
@@ -62,15 +75,18 @@ pub struct Messages {
     pub model: Shared,
     rect: LRect,
     laid: BTreeMap<Id, Laid>,
-    /// The items with their tops in the content and their heights, physical.
+    /// A slot a message, in the messages' order.
+    slots: Vec<Slot>,
+    /// The width, the scale and the zone the slots and the layouts were made for.
+    key: (i32, i32, i32),
+    /// The items in and near the view, with their tops in the content and their
+    /// heights, physical.
     placed: Vec<(Item, i32, i32)>,
     total: i32,
     /// The most the view scrolls up, logical.
     max_scroll: i32,
     /// The visible messages' bubbles from the last paint.
     hits: Vec<(usize, paint::Rect)>,
-    /// The newest message and the content's height at the last arrangement.
-    seen: (Id, i32),
     wheel: WheelSteps,
     held: bool,
     /// The scale's factor at the last paint.
@@ -93,11 +109,12 @@ impl Messages {
             model,
             rect: LRect::default(),
             laid: BTreeMap::new(),
+            slots: Vec::new(),
+            key: (0, 0, 0),
             placed: Vec::new(),
             total: 0,
             max_scroll: 0,
             hits: Vec::new(),
-            seen: (0, 0),
             wheel: WheelSteps::default(),
             held: false,
             k: 1,
@@ -117,7 +134,6 @@ impl Messages {
         let cpx = text::CAPTION.physical(p.scale);
         let mut l = Laid {
             rev,
-            avail,
             k,
             w: 0,
             h: 0,
@@ -200,59 +216,179 @@ impl Messages {
         l
     }
 
-    /// Lays out what changed, places every item, and keeps the scroll within the
-    /// content.
+    /// A message's height before it is laid out: its parts, and its text's lines guessed
+    /// from its length. It stands in for the real height while the message is far from
+    /// the view.
+    fn estimate(m: &MessageRow, group: bool, avail: i32, k: i32) -> i32 {
+        if m.kind == MessageKind::Service {
+            return 24 * k;
+        }
+        let max_inner = (avail * 7 / 10).min(MAX_BUBBLE * k).max(120 * k) - 2 * PAD_X * k;
+        let mut h = 2 * PAD_Y * k;
+        if group && !m.out {
+            h += 18 * k;
+        }
+        if m.forward.is_some() {
+            h += 17 * k;
+        }
+        if m.reply.is_some() {
+            h += 36 * k;
+        }
+        h += match m.kind {
+            MessageKind::Text => 0,
+            MessageKind::Photo | MessageKind::Sticker => 128 * k,
+            _ => 48 * k,
+        };
+        if m.text.text.is_empty() {
+            return h + 15 * k;
+        }
+        // About seven pixels a character at the body size.
+        let per_line = (max_inner / (7 * k)).max(1) as usize;
+        let lines: usize = m
+            .text
+            .text
+            .split('\n')
+            .map(|l| l.chars().count().div_ceil(per_line).max(1))
+            .sum();
+        h + lines as i32 * LINE * k
+    }
+
+    /// Places the items in and near the view, from the newest message up, laying out
+    /// only the messages within `margin` of the view (and `must`, the keyboard's message
+    /// when it is to be brought into view). Every other message costs an addition: its
+    /// height is kept in its slot, a layout's once it had one, else an estimate. Returns
+    /// how many were laid out.
+    fn place(&mut self, p: &mut Painter, m: &Model, region: paint::Rect, must: Option<usize>) -> u32 {
+        let k = self.k;
+        let avail = region.w - 2 * SIDE * k;
+        let offset = m.utc_offset;
+        let group = m.kind == ChatKind::Group;
+        let n = m.messages.len();
+        if self.key != (avail, k, offset) {
+            self.key = (avail, k, offset);
+            self.slots.clear();
+            self.laid.clear();
+        }
+        // A page of older messages came: the slots move with their messages.
+        if let Some(first) = self.slots.first()
+            && n > self.slots.len()
+            && m.messages[n - self.slots.len()].row.id == first.id
+        {
+            let added = n - self.slots.len();
+            self.slots.splice(0..0, core::iter::repeat_n(Slot::default(), added));
+        }
+        self.slots.resize(n, Slot::default());
+        if self.laid.len() > 256 {
+            // Those in view are made again below; the heights stay in the slots.
+            self.laid.clear();
+        }
+        let margin = region.h / 2;
+        // The view's bottom and top, as distances up from the content's bottom.
+        let low = m.scroll * k - 8 * k - margin;
+        let high = m.scroll * k + region.h + margin;
+        self.placed.clear();
+        let mut laid_now = 0;
+        // `below` is the distance from the content's bottom to the item's bottom.
+        let mut below = 0;
+        for i in (0..n).rev() {
+            let msg = &m.messages[i];
+            let before = if i > 0 { m.messages[i - 1].row.id } else { 0 };
+            let slot = &mut self.slots[i];
+            if slot.id != msg.row.id || slot.rev != msg.rev {
+                *slot = Slot {
+                    id: msg.row.id,
+                    rev: msg.rev,
+                    h: Messages::estimate(&msg.row, group, avail, k),
+                    before: Id::MIN,
+                    above: 0,
+                    day: false,
+                };
+            }
+            if slot.before != before {
+                // What stands above it: the day's line when it is the day's first, else
+                // a gap, smaller between two messages of one sender.
+                slot.before = before;
+                let day = |d: i64| (d + i64::from(offset)).div_euclid(86_400);
+                match i.checked_sub(1).map(|x| &m.messages[x].row) {
+                    Some(prev) if day(prev.date) == day(msg.row.date) => {
+                        let same = prev.kind != MessageKind::Service
+                            && prev.out == msg.row.out
+                            && prev.sender == msg.row.sender;
+                        slot.day = false;
+                        slot.above = if same { 3 * k } else { 8 * k };
+                    }
+                    _ => {
+                        slot.day = true;
+                        slot.above = 8 * k;
+                    }
+                }
+            }
+            let near = must == Some(i) || (below <= high && below + slot.h >= low);
+            if near {
+                let fresh = self.laid.get(&msg.row.id).is_some_and(|l| l.rev == msg.rev);
+                if !fresh {
+                    let l = Messages::lay(p, &msg.row, msg.rev, group, avail, offset);
+                    slot.h = l.h;
+                    self.laid.insert(msg.row.id, l);
+                    laid_now += 1;
+                }
+                self.placed.push((Item::Msg(i), below, slot.h));
+            }
+            below += slot.h + slot.above;
+            if slot.day {
+                if near {
+                    self.placed.push((Item::Day(msg.row.date), below, 34 * k));
+                }
+                below += 34 * k;
+            }
+        }
+        self.total = below;
+        // Top down, each with its top in the content.
+        self.placed.reverse();
+        for (_, at, h) in &mut self.placed {
+            *at = below - *at - *h;
+        }
+        laid_now
+    }
+
+    /// The top of the item `i` of `placed` from the region's top, at `scroll`.
+    fn screen_top(&self, i: usize, scroll: i32, region_h: i32) -> i32 {
+        region_h - 8 * self.k + scroll * self.k - self.total + self.placed[i].1
+    }
+
+    /// Lays out the messages in and near the view, places every item, and keeps the
+    /// view where it was: on the message at its top when heights above or below it
+    /// changed (an estimate became a layout, a message came), and within the content.
     fn arrange(&mut self, p: &mut Painter) {
         let k = p.scale.factor() as i32;
         self.k = k;
         let region = self.region(p);
-        let avail = region.w - 2 * SIDE * k;
-        let mut m = self.model.borrow_mut();
-        let offset = m.utc_offset;
-        let group = m.kind == ChatKind::Group;
-        if self.laid.len() > m.messages.len() * 2 + 64 {
-            self.laid.clear();
-        }
-        self.placed.clear();
-        let mut y = 0;
-        let mut day = i64::MIN;
-        let mut before: Option<(bool, &str)> = None;
-        for (i, msg) in m.messages.iter().enumerate() {
-            let d = time::civil(msg.row.date, offset).days;
-            if d != day {
-                day = d;
-                self.placed.push((Item::Day(msg.row.date), y, 34 * k));
-                y += 34 * k;
-                before = None;
+        let model = self.model.clone();
+        let mut m = model.borrow_mut();
+        let must = m.reveal.then_some(m.msg_cursor).flatten();
+        let asked = m.scroll;
+        let mut laid_now = 0;
+        // The scroll may move for the anchor, the cursor or the content's end: each
+        // time, what is then in view is laid out; it settles in a round or two.
+        for round in 0..4 {
+            laid_now += self.place(p, &m, region, must);
+            let was = m.scroll;
+            // The message that was at the view's top stays where it was, moved by what
+            // the person scrolled since; at the newest message the view stays at the end.
+            if must.is_none()
+                && asked > 0
+                && let Some((id, top, scroll)) = m.anchor
+                && let Some(i) = self.placed.iter().position(
+                    |(it, ..)| matches!(it, Item::Msg(x) if m.messages[*x].row.id == id),
+                )
+            {
+                let want = (top + asked - scroll) * k;
+                let now = self.screen_top(i, m.scroll, region.h);
+                m.scroll = (m.scroll + (want - now) / k).max(1);
             }
-            let fresh = self
-                .laid
-                .get(&msg.row.id)
-                .is_some_and(|l| l.rev == msg.rev && l.avail == avail && l.k == k);
-            if !fresh {
-                let l = Messages::lay(p, &msg.row, msg.rev, group, avail, offset);
-                self.laid.insert(msg.row.id, l);
-            }
-            let h = self.laid[&msg.row.id].h;
-            // Messages of one sender stand closer together.
-            let same = before == Some((msg.row.out, msg.row.sender.as_str()));
-            y += if same { 3 * k } else { 8 * k };
-            self.placed.push((Item::Msg(i), y, h));
-            y += h;
-            before = (msg.row.kind != MessageKind::Service)
-                .then_some((msg.row.out, msg.row.sender.as_str()));
-        }
-        self.total = y;
-        let newest = m.messages.last().map_or(0, |x| x.row.id);
-        // A message that came while the view was scrolled up does not move it.
-        if m.scroll > 0 && self.seen.0 != 0 && newest != self.seen.0 && self.total > self.seen.1 {
-            m.scroll += (self.total - self.seen.1) / k;
-        }
-        self.seen = (newest, self.total);
-        self.max_scroll = ((self.total + 16 * k - region.h) / k).max(0);
-        if m.reveal {
-            m.reveal = false;
-            if let Some(c) = m.msg_cursor
+            self.max_scroll = ((self.total + 16 * k - region.h) / k).max(0);
+            if round == 0
+                && let Some(c) = must
                 && let Some((_, top, h)) = self
                     .placed
                     .iter()
@@ -267,8 +403,25 @@ impl Messages {
                     m.scroll = above;
                 }
             }
+            m.scroll = m.scroll.clamp(0, self.max_scroll);
+            if m.scroll == was {
+                break;
+            }
         }
-        m.scroll = m.scroll.clamp(0, self.max_scroll);
+        m.reveal = false;
+        // The anchor for the next time: the first message that reaches into the view.
+        m.anchor = None;
+        for (i, (item, _, h)) in self.placed.iter().enumerate() {
+            let top = self.screen_top(i, m.scroll, region.h);
+            if let Item::Msg(x) = item
+                && top + h > 0
+            {
+                m.anchor = Some((m.messages[*x].row.id, top / k, m.scroll));
+                break;
+            }
+        }
+        m.stats.laid = laid_now;
+        m.stats.held = self.laid.len() as u32;
         if m.scroll + 240 >= self.max_scroll {
             m.want_older();
         }
