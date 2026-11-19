@@ -150,3 +150,70 @@ socket files), and a route for native programs built outside the repository (R20
 view-models under `tgd/vm/` serving the protocol of `docs/tg-window.md`, `SocketBackend` in place of
 `SampleBackend` behind the same trait, both programs installed, and the architect's real login in the window's
 password field.
+
+## Stage B step 1: tgclient's view-models in `tgd/vm/` (2026-11-19)
+
+Zoraya's `origin/main` at `754d2b49` has 10j (installed programs, saved grants) and the socket files in a program's
+own directory reached by `+sock` (ADR-0465, accepted; its BIND right is queued as `work/bind-right`). Step 1 needs
+none of it: it is host Python only, and was done while the TASK-31 dispatcher held the machine's builds (no cargo, no
+make of Zoraya, no QEMU).
+
+**What it is.** `tgd/vm/` (2 186 lines): tgclient's Qt view-models and controllers with their method bodies kept,
+over `qt.py` (161 lines), the part of `PySide6.QtCore` they use without Qt. A `Signal` is a list of callables, and
+`QAbstractListModel`'s begin/end pairs emit `rowsInserted`, `rowsRemoved`, `rowsMoved`, `dataChanged` and
+`modelReset` with Qt's arguments. `server.py` (`WindowServer`) listens to those notifications as QML did and speaks
+protocol 2 (`docs/tg-window.md`, "The protocol"): requests in (`handle`), events out (`emit`), ids as strings, the
+names and fields of `tg_window::proto`.
+- **The chat list:** every notification means "the window may have changed". Its rows are computed again and the
+  middle that differs from what was sent goes out as one `chats.splice`.
+- **The messages:** a mirror of the model's ids lets a removal know what it removed. An insertion at the newest end
+  is a `message.new`. A changed row whose protocol row differs from the one sent is a `message.update`. A removal is
+  a `message.delete`. A sent message's temporary id becoming its final one (ChatHistory removes the old row, then
+  inserts the new) is one `message.update` with `old_id`.
+- **The text:** `rows.rich` is the emitter beside tgclient's `formatted_to_html`. It uses the same entities and the
+  same UTF-16 map, and writes code points and spans. Spoilers stay hidden as in tgclient: their characters become
+  U+2591, so no offset moves.
+
+| `tgd/vm/` | tgclient (`ccba758`, read-only) | Kept | Changed or left for later |
+|---|---|---|---|
+| `qt.py` | PySide6.QtCore | `Signal`, `Slot`, `Property`, `QObject`, `QAbstractListModel` (begin/end, `index`), `QModelIndex`, `Qt.ItemDataRole`, `QByteArray` | No event loop: tgclient's models already run on asyncio. |
+| `chat_list.py` | `models/chat_list.py` `ChatListModel` | Everything. | Only the imports (`.qt`, `tgclient.store`). |
+| `messages.py` | `models/messages.py` `MessageListModel`, `_Adapter` | `_Adapter`, `open`, `_start`, `_stop`, `close`, `loadOlder`, `loadNewer`, `jumpToLatest`, `send`, `sendMessage`, `markViewed`, `_load_initial`, `_send`, `_formatted`, `_run_load`, `_row_changed`, `_on_chat_store`, `_status`, `_sender_name`, `_forwarded_from`, the forum/thread queries, `_album_range`, `_refresh_albums` | `__init__`: no font, palette, files, presence, forums or custom emoji. `data()` answers the roles a protocol row needs (`Html` becomes `Body`, the formattedText; `Time` is the Unix time) and does not prefetch: the window asks with `messages.older`. Later: selection and its actions, search in a chat, pinned bar, scheduled, keyboards, polls, reactions, edit, delete, forward, links, media files, translation, transcripts. |
+| `composer.py` | `models/composer.py` `ComposerModel` | `setDraft`, `sent`, `flush`, `close`, `_on_chats` (the cloud draft back), `_save_later`, `_save`, `_send_typing` | `_on_chat_changed` without staged files, link preview, @mentions. `messages.send` calls `sent()`; `draft.set` comes later. |
+| `server.py` `_search` | `models/search.py` `SearchModel._chat_rows` | The match (title contains the query, chats in a list) and the order (starts with it first, then Telegram's order). | All matches, not the panel's first five: they are the filtered list `chats.window` asks for. Message hits (SearchService, numpy) later. |
+| `auth.py` | `ui/auth_controller.py` `AuthController` | Everything else, including the AuthUI protocol that tgclient's AuthFlow calls. | No QR login (`qrSource`, `requestQr`; TG-01, decision 5). |
+| `ai.py` | `ui/ai_controller.py` `AiController`, over tgclient's `services/ai.py` `AiService` unchanged | `chatId`, `available`, `enabled`, `setEnabled`, `summarize`, `summaryState`/`Scope`/`Text`/`Error`, `_on_service`, `_on_chats` | The key, models, budget, questions, events, answers, documents, replies, translation, digest later. tgclient's summary arrives whole, so `ai.summary` is `running` and then `done` with the whole text; `ai.cancel` stops telling the window (tgclient's job runs on). |
+| `rows.py` | `store/richtext.py` (`formatted_to_html`), `store/format.py`, `store/media.py` | The entities, the UTF-16 map, the previews and labels, `extract`, `human_size`, `duration_text` | New: the protocol's chat and message rows; video, GIF and video messages as photo placeholders with their label and duration; audio and documents as files; tgclient's `failed` stays `pending` (protocol 2 has no failed state yet). |
+
+Protocol choices recorded here:
+- **Settings:** `settings` has one item, `ai.chat` ("AI summaries of this chat"), while a chat that AI may serve is
+  open. It is tgclient's per-chat switch, so a summary is never asked of a chat whose AI is off.
+- **Login refusals:** an answer for a step not asked now, or a message to a chat not open, raises `RequestError`.
+  Its text names what was wrong, never the value.
+- **`messages.reset`:** `subtitle` is empty until presence is wired (`PresenceStore`, later). Opening a chat marks
+  what the reset showed as viewed, and a new incoming message in the open chat is viewed at once.
+
+**Tested** on the host by `tests/tgd_vm.py` (`make test-tgd-vm`, Python 3.12, under a second). It runs tgclient's own
+`TdClient`, `ChatStore`, `UserStore`, `FileManager` and `ChatHistory` over a fake hub that answers TDLib's requests
+and sends its updates from an invented account in English, Ukrainian and Russian. There is no TDLib and no account,
+and nothing of tgclient's data or sessions is opened. Five checks, **passed twice**:
+- **The chat list:** whole rows, one splice for a move, and 600 random steps (messages, reorders, pins, a chat
+  leaving, new chats, new windows). After each step the window's rows equal the store's list, in order and content.
+- **Search** with a Cyrillic query.
+- **Messages:**
+  - the reset (oldest first, `more`), with spans in code points after an emoji;
+  - a reply's quote;
+  - pages to the start (contiguous);
+  - a send: `message.new` pending with the temporary id, then `message.update` to the final id, with no
+    `message.delete`;
+  - a new incoming message, read on arrival;
+  - read by the other side, edited, deleted;
+  - a hidden spoiler, the placeholders' details, a link span;
+  - a closed chat refused.
+- **AI:** refused while off for the chat, switched on through `settings.set`, then `running` and `done`.
+- **The login:** `hello` (protocol 2, the clock, the zone), phone, code and password through the AuthController,
+  a code refused while the phone is asked, TDLib's error message shown. No typed value comes back in an event.
+
+**Next (step 2):** `tgd` creates the `WindowServer` over its core's client and stores, with the `AuthController` as
+the AuthFlow's UI. It listens on a socket file in its own directory (ADR-0465). `tg`'s `SocketBackend` serialises
+`tg_window::proto` over it, with a saved `+sock` grant.

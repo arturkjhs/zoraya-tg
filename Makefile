@@ -19,6 +19,8 @@
 #   make host     tgd on the host: libtdjson from the same TDLib (build/host/td-lib),
 #                 a venv with cryptography; run out/host/bin/tgd
 #   make test-tgd-host   the protocol test on the host (no account)
+#   make test-tgd-vm     tgd/vm (tgclient's view-models, protocol 2) on the host against a
+#                        fake TDLib: no TDLib, no account, no build; python3.12 or newer
 #   make smoke-tgd       tgd inside Zoraya under HVF (no account), build/logs/smoke-tgd.log
 #   make smoke-tgd-net   the same with the Internet and the report's line (no account)
 #   make run-tgd         Zoraya with the network, interactive, a kept disk (the hand check)
@@ -62,7 +64,7 @@ HOST_OPENSSL ?= $(shell brew --prefix openssl@3 2>/dev/null)
 
 logged = $(1) > $(LOGS)/$(2).log 2>&1 || { echo "$(2) failed: $(LOGS)/$(2).log"; tail -40 $(LOGS)/$(2).log; exit 1; }
 
-.PHONY: fetch td python root smoke clean wheels tgd host test-tgd-host smoke-tgd smoke-tgd-net run-tgd \
+.PHONY: fetch td python root smoke clean wheels tgd host test-tgd-host test-tgd-vm smoke-tgd smoke-tgd-net run-tgd \
 	overlay test-tg-host tg tg-image test-tg-window run-tg
 .SUFFIXES:
 
@@ -218,7 +220,7 @@ $(TGD_STAMP): $(B)/tgd.elf $(WHEELS)/.stamp $(shell find tgd -type f -not -name 
 	@[ -f $(TGC_SRC)/td/client.py ] || { echo "tgd: no tgclient checkout at TGCLIENT=$(TGCLIENT)"; exit 1; }
 	rm -rf $(OUT)/tgd && mkdir -p $(OUT)/tgd/bin $(TGD_LIB)/tgclient $(TGD_LIB)/site
 	cp $(B)/tgd.elf $(OUT)/tgd/bin/tgd
-	cp -R tgd/tgd tgd/zoraya tgd/tgd.py $(TGD_LIB)/
+	cp -R tgd/tgd tgd/vm tgd/zoraya tgd/tgd.py $(TGD_LIB)/
 	cd $(TGC_SRC) && cp $(TGC_TOP) $(TGD_LIB)/tgclient/ && \
 	  find $(TGC_DIRS) -type f \( -name '*.py' -o -name '*.json' \) | while read f; do \
 	    mkdir -p $(TGD_LIB)/tgclient/$$(dirname $$f) && cp $$f $(TGD_LIB)/tgclient/$$f; done
@@ -258,6 +260,11 @@ host: $(HOST_OUT)/lib/.stamp $(HOST_VENV)/.stamp $(TGD_STAMP)
 	{ echo '#!/bin/sh'; echo 'TDJSON_PATH="$${TDJSON_PATH:-$(HOST_OUT)/lib/libtdjson.dylib}" exec $(HOST_VENV)/bin/python -I $(HOST_OUT)/usr/lib/tgd/tgd.py "$$@"'; } > $(HOST_OUT)/bin/tgd
 	chmod 755 $(HOST_OUT)/bin/tgd
 	@echo "host: run $(HOST_OUT)/bin/tgd --test-dc"
+
+# tgd/vm needs only tgclient's Qt-free packages (TGCLIENT) and a Python >= 3.12.
+VM_PY ?= python3.12
+test-tgd-vm:
+	$(VM_PY) -I tests/tgd_vm.py $(TGC_SRC)/..
 
 test-tgd-host: host
 	$(HOST_VENV)/bin/python -I tests/tgd_protocol.py $(HOST_OUT)/bin/tgd

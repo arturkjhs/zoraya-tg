@@ -1,4 +1,4 @@
-# Status (TG-04, stage A)
+# Status (TG-04, stage B)
 
 2026-11-15: the window `tg` with its sample backend is written, tested on the host (`make test-tg-host`, 33 tests)
 and running inside Zoraya from the dock (`make tg-image`, `make run-tg`); the design is `docs/tg-window.md`, the
@@ -14,4 +14,9 @@ Zoraya's source for this task is the local clone `../zoraya-tgw` (no remote), at
 **Still waiting for the architect (TG-03):** the real-account login, by hand, on the host and then inside Zoraya
 (`make run-tgd`), with the steps in `docs/tgd-report.md`.
 
-**Stage B waits for** 10g, 10j, F2 and F7 in Zoraya's `origin/main`.
+**Stage B** started 2026-11-19: 10j and the own-directory sockets (ADR-0465) are on `origin/main` (`754d2b49`).
+
+2026-11-19: **stage B step 1 is done**: tgclient's view-models in `tgd/vm/` serving protocol 2, with the mapping
+table in `docs/tg-window-report.md` ("Stage B step 1"). `make test-tgd-vm` (host Python against a fake TDLib) passes
+twice. It was host Python only while the TASK-31 dispatcher held the builds. Steps 2 and 3 (the socket, installing)
+wait for the dispatcher to pause; then `CARGO_BUILD_JOBS=4`, one QEMU at a time.
