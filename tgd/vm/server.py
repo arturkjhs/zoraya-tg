@@ -264,6 +264,12 @@ class WindowServer:
         state = self._open = _OpenChat(chat_id, count)
         self._loaded.clear()
         self.messages.open(chat_id)
+        # tgclient opens a chat with unread messages around the last read one (its
+        # _load_initial); the window is anchored at the newest and jumps itself, so the
+        # boundary is sent (`last_read`, `unread`) and the newest page is loaded.
+        last_read = self.messages._unread_after
+        unread = int(chat.unread_count) if last_read else 0
+        self.messages._unread_after = 0
         if self.ai is not None:
             self.ai.chatId = chat_id
         await self._loaded.wait()
@@ -277,7 +283,8 @@ class WindowServer:
         state.ready = True
         self._emit({"ev": "messages.reset", "chat": str(chat_id), "title": chat.title,
                     "subtitle": "", "kind": rows.chat_kind(chat, self._users.my_id),
-                    "rows": out, "more": len(state.ids) > count or not history.reached_start})
+                    "rows": out, "more": len(state.ids) > count or not history.reached_start,
+                    "last_read": str(last_read) if last_read else None, "unread": unread})
         if out:
             self.messages.markViewed(0, len(out) - 1)  # the chat is read: what is shown
 

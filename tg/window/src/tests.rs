@@ -1277,3 +1277,71 @@ fn shots() {
     ui.open("Оксана Коваль");
     save(&mut ui, "chat@2x");
 }
+
+// ---------------------------------------------------------------- step 4: where the view is
+
+#[test]
+fn the_position_and_a_jump_to_the_first_unread_message() {
+    let mut ui = Ui::main();
+    let palette = Appearance::Light.palette();
+    let accent = palette.accent.pixel() & 0xff_ffff;
+    ui.open("Project archive");
+    ui.paint();
+    {
+        let m = ui.model.borrow();
+        assert_eq!(m.unread_open, 120);
+        assert!(m.unread_not_loaded(), "120 unread, a page of {}", m.messages.len());
+        assert_eq!(m.scroll, 0);
+    }
+    assert!(ui.said("tg: unread 120"));
+    // The pill at the top right says how many and how to get there.
+    assert_eq!(ui.pixel(WIDTH as i32 - 18, 70), accent);
+    // U in the messages: an older page first, then the first unread message at the view's
+    // top, chosen, with the line above it.
+    ui.focus(Role::Messages);
+    ui.key(key::U);
+    ui.paint();
+    ui.pump();
+    ui.paint();
+    {
+        let m = ui.model.borrow();
+        assert!(!m.want_unread && !m.unread_not_loaded());
+        let i = m.first_unread().expect("loaded now");
+        assert_eq!(m.msg_cursor, Some(i));
+        assert!(!m.messages[i].row.out && m.messages[i - 1].row.id == m.last_read.expect("set"));
+        assert_eq!(m.messages.len() - i, 120, "the first of the 120");
+        assert!(m.scroll > 0);
+    }
+    assert!(ui.said("tg: first unread:"));
+    // It is in view: the unread pill has gone; the newer one is there.
+    assert_ne!(ui.pixel(WIDTH as i32 - 18, 70), accent);
+    // End: back to the newest, and the newer pill goes.
+    ui.key(keys::END);
+    ui.paint();
+    assert_eq!(ui.model.borrow().scroll, 0);
+    assert!(ui.said("tg: newest"));
+    // Sending something takes the line away, as tgclient's separator.
+    ui.focus(Role::Composer);
+    ui.type_text("seen");
+    ui.key(keys::ENTER);
+    assert_eq!(ui.model.borrow().last_read, None);
+    assert_eq!(ui.model.borrow().first_unread(), None);
+}
+
+#[test]
+fn a_chat_with_its_unread_messages_loaded_jumps_at_once() {
+    let mut ui = Ui::main();
+    ui.open("Book club");
+    ui.paint();
+    let first = {
+        let m = ui.model.borrow();
+        assert_eq!(m.unread_open, 3);
+        assert!(!m.unread_not_loaded());
+        m.first_unread().expect("loaded")
+    };
+    ui.focus(Role::Messages);
+    ui.key(key::U);
+    assert_eq!(ui.model.borrow().msg_cursor, Some(first));
+    // No request for older pages was needed.
+    assert!(!ui.model.borrow().want_unread);
+}

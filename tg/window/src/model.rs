@@ -14,6 +14,8 @@ use crate::proto::{
 
 /// The messages asked for at a time.
 pub const PAGE: u32 = 40;
+/// The page asked for at a time on the way to the first unread message.
+pub const JUMP_PAGE: u32 = 200;
 /// The longest message the composer sends, in characters (Telegram's limit).
 pub const MAX_MESSAGE: usize = 4096;
 
@@ -182,6 +184,12 @@ pub struct Model {
     pub messages: Vec<Msg>,
     pub more: bool,
     asked_older: bool,
+    /// The last message read before the chat was opened (some were unread then), and how
+    /// many were unread: where the "Unread messages" line goes and what the jump finds.
+    pub last_read: Option<Id>,
+    pub unread_open: u32,
+    /// The jump to the first unread message waits for older pages.
+    pub want_unread: bool,
     rev: u32,
     /// Logical pixels the view is scrolled up from the newest message.
     pub scroll: i32,
@@ -252,6 +260,9 @@ impl Model {
             messages: Vec::new(),
             more: false,
             asked_older: false,
+            last_read: None,
+            unread_open: 0,
+            want_unread: false,
             rev: 0,
             scroll: 0,
             anchor: None,
@@ -377,6 +388,8 @@ impl Model {
                 kind,
                 rows,
                 more,
+                last_read,
+                unread,
             } => {
                 if self.open != Some(chat) {
                     return;
@@ -386,6 +399,12 @@ impl Model {
                     "tg: opened \"{title}\": {} messages, last: {last}",
                     rows.len()
                 ));
+                self.last_read = last_read.filter(|_| unread > 0);
+                self.unread_open = unread;
+                self.want_unread = false;
+                if unread > 0 {
+                    self.say(format!("tg: unread {unread}"));
+                }
                 self.title = title;
                 self.subtitle = subtitle;
                 self.kind = kind;
@@ -410,6 +429,10 @@ impl Model {
                 // The cursor and the selection stay on their messages.
                 self.msg_cursor = self.msg_cursor.map(|c| c + n);
                 self.msg_anchor = self.msg_anchor.map(|c| c + n);
+                // On the way to the first unread message: there, or another page.
+                if self.want_unread {
+                    self.jump_unread();
+                }
                 self.say(format!(
                     "tg: older {n}, {} loaded{}",
                     self.messages.len(),
@@ -721,6 +744,9 @@ impl Model {
         self.messages.clear();
         self.more = false;
         self.asked_older = false;
+        self.last_read = None;
+        self.unread_open = 0;
+        self.want_unread = false;
         self.scroll = 0;
         self.anchor = None;
         self.msg_cursor = None;
@@ -786,6 +812,61 @@ impl Model {
         self.scroll = 0;
         self.msg_cursor = None;
         self.msg_anchor = None;
+        // Sending something: the line goes, as tgclient's separator does.
+        self.last_read = None;
+        self.want_unread = false;
+    }
+
+    /// The first unread message, if it is loaded: the first incoming one after
+    /// `last_read`.
+    pub fn first_unread(&self) -> Option<usize> {
+        let read = self.last_read?;
+        self.messages
+            .iter()
+            .position(|m| !m.row.out && m.row.kind != MessageKind::Service && m.row.id > read)
+    }
+
+    /// Whether the first unread message is older than what is loaded.
+    pub fn unread_not_loaded(&self) -> bool {
+        self.last_read.is_some_and(|read| {
+            self.more && self.messages.first().is_none_or(|m| m.row.id > read)
+        })
+    }
+
+    /// Jumps to the first unread message (U, or the "unread" pill): the view brings it to
+    /// its top and it is chosen. If it is older than what is loaded, older pages are
+    /// asked for first, as many as it takes.
+    pub fn jump_unread(&mut self) {
+        let Some(chat) = self.open else { return };
+        if self.unread_not_loaded() {
+            self.want_unread = true;
+            if !self.asked_older
+                && let Some(first) = self.messages.first()
+            {
+                self.out.push(Request::MessagesOlder {
+                    chat,
+                    before: first.row.id,
+                    count: JUMP_PAGE,
+                });
+                self.asked_older = true;
+            }
+            return;
+        }
+        self.want_unread = false;
+        let Some(i) = self.first_unread() else { return };
+        self.msg_cursor = Some(i);
+        self.msg_anchor = Some(i);
+        self.reveal = true;
+        self.focus = Some(Role::Messages);
+        let text = one_line(&self.messages[i].row.text.text);
+        self.say(format!("tg: first unread: {text}"));
+    }
+
+    /// Back to the newest message (End, or the "newer" pill).
+    pub fn jump_newest(&mut self) {
+        self.scroll = 0;
+        self.anchor = None;
+        self.say(String::from("tg: newest"));
     }
 
     /// The keyboard's message moved by `delta` (with `extend`, the selection grows).

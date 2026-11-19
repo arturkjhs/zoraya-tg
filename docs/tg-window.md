@@ -87,6 +87,15 @@ the window what a screenful costs.
 - Only the messages in the view and half a view each way are laid out; the others stand at a height kept for them
   (a layout's once they had one, else an estimate), and the message at the view's top is the anchor that keeps the
   view still when those heights change. A chat of a thousand messages costs a frame what a screenful costs.
+- **Where the view is** (stage B step 4): a thumb of `border.strong` at the messages' right edge, 3 wide, as high as
+  the view is of what is loaded and placed as the view is in it (older pages not yet asked for are not counted);
+  while the view is above the newest message, a pill at the bottom right in `accent` with the count of messages
+  below the view (`37 newer · End`), which a press or End takes back to the newest.
+- **The first unread message.** A chat opened with unread messages (`messages.reset`'s `last_read` and `unread`) has
+  an `Unread messages` line in `accent` above its first unread message, tgclient's separator; it goes when something
+  is sent. While that message is above the view, or older than what is loaded, a pill at the top right says
+  `47 unread · U`; a press on it, or U in the messages, jumps there: older pages are asked for (200 at a time) until
+  it is loaded, then the view brings it to its top and it is chosen (the keyboard's message).
 
 ### The composer
 
@@ -220,7 +229,7 @@ equal the backend's list). The cost is at most one screenful a change.
 | | |
 |---|---|
 | `chat.open` `{chat, count}` | Opens the chat, reads it, and subscribes to it. |
-| → `messages.reset` `{chat, title, subtitle, kind, rows, more}` | The newest `count` messages, oldest first; `more`: older ones exist. |
+| → `messages.reset` `{chat, title, subtitle, kind, rows, more, last_read, unread}` | The newest `count` messages, oldest first; `more`: older ones exist. `last_read` (protocol 3): the last message read before it was opened, when `unread` (how many) were not; the first unread one is the first incoming message after it, and may be older than `rows`. |
 | `messages.older` `{chat, before, count}` → `messages.page` `{chat, rows, more}` | The page before message `before`. |
 | → `message.new` `{chat, row}` | A message at the end. |
 | → `message.update` `{chat, old_id, row}` | The message `old_id` is now `row`: edited, confirmed (a sent message's temporary id becomes its final one), read. |

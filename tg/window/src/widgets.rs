@@ -32,6 +32,8 @@ pub mod key {
     pub const PAGE_DOWN: u32 = 109;
     pub const F: u32 = 33;
     pub const R: u32 = 19;
+    /// U: to the first unread message.
+    pub const U: u32 = 22;
 }
 
 /// The widgets' ids, which their `Activated` and `Changed` carry.

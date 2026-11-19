@@ -96,12 +96,27 @@ serial tg: chats 7 from 0: "Mark Owens"
 pause 500
 shot tgs-list
 #
-# The club (row 6): its newest 40 messages, Cyrillic, a photo's placeholder.
+# The club (row 6): its newest 40 messages, Cyrillic, a photo's placeholder; 47 were
+# unread, more than the page, so the first unread one is not loaded yet: the pill at the
+# top right (accent 3b4f6b) says how many.
 click 255 558
 then tg: opened "Книжковий клуб": 40 messages, last: Обкладинка
+then tg: unread 47
 then tg: chat "Книжковий клуб" unread 0
+region 925 204 4 8 3b4f6b
 pause 500
 shot tgs-chat
+#
+# Step 4: a press on the pill jumps to the first unread message (an older page first), at
+# the view's top under the "Unread messages" line; the pill goes. End is the newest.
+click 927 208
+then tg: older
+then tg: first unread: Повідомлення номер 10
+pause 500
+shot tgs-unread
+key end
+then tg: newest
+click 500 630
 type hello over the socket\r
 then tg: message "Книжковий клуб" out: hello over the socket
 then tg: delivered: hello over the socket

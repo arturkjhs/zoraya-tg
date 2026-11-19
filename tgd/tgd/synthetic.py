@@ -269,6 +269,14 @@ def account(td: FakeTd) -> dict[str, Any]:
         td.message(13, sender, text(f"Повідомлення номер {i}"), date=NOW - 7000 + i * 60,
                    quiet=True)
     club = td.history[13]
+    # Read up to the tenth message: more unread than a page of 40, so the window's jump to
+    # the first unread loads older pages first.
+    read = club[9]["id"]
+    chat = td.chats[13]
+    chat["last_read_inbox_message_id"] = read
+    chat["unread_count"] = sum(1 for m in club if m["id"] > read and not m["is_outgoing"])
+    td.update({"@type": "updateChatReadInbox", "chat_id": 13, "last_read_inbox_message_id": read,
+               "unread_count": chat["unread_count"]})
     question = td.message(13, 2, marked("Хто прочитав «Тіні забутих предків»? 📚 так", "так",
                                         "textEntityTypeBold"), reply_to=club[-1]["id"])
     photo = td.message(13, 3, {"@type": "messagePhoto", "caption": {
@@ -286,6 +294,8 @@ def account(td: FakeTd) -> dict[str, Any]:
     voice = td.message(16, 4, {"@type": "messageVoiceNote", "voice_note": {
         "duration": 42, "voice": {"id": 91, "size": 1000}}})
     return {"question": question["id"], "photo": photo["id"], "reply_to": club[-1]["id"],
+            "last_read": read, "first_unread": club[10]["id"] if club[10]["sender_id"]["user_id"] != ME
+            else club[11]["id"],
             "link": link["id"], "spoiler": spoiler["id"], "doc": doc["id"], "voice": voice["id"]}
 
 

@@ -115,7 +115,7 @@ async def check_chat_list(td: FakeTd, server: WindowServer, chats: ChatStore,
     saved = next(r for r in w.rows if r["id"] == "15")
     assert saved["kind"] == "saved", saved
     club = next(r for r in w.rows if r["id"] == "13")
-    assert club["kind"] == "group" and club["unread"] == 2, club
+    assert club["kind"] == "group" and club["unread"] == 47, club  # 45 of the history, 2 new
     muted = next(r for r in w.rows if r["id"] == "12")
     assert muted["muted"] and muted["last"] == "Встреча в пятницу, секрет", muted
     await server.handle({"op": "chats.window", "first": 0, "count": 5, "query": ""})
@@ -190,6 +190,11 @@ async def check_messages(td: FakeTd, server: WindowServer, chats: ChatStore, w: 
     assert len(reset) == 1, reset
     reset = reset[0]
     assert reset["title"] == "Книжковий клуб" and reset["kind"] == "group" and reset["more"]
+    # The newest page, with where the unread ones begin (the window's jump): not loaded yet.
+    unread = sum(1 for m in td.history[13] if m["id"] > refs["last_read"] and not m["is_outgoing"])
+    assert reset["last_read"] == str(refs["last_read"]) and reset["unread"] == unread, \
+        (reset["last_read"], reset["unread"], unread)
+    assert all(int(m["id"]) > refs["last_read"] for m in reset["rows"])
     assert len(w.messages) == 30
     ids = [int(m["id"]) for m in w.messages]
     assert ids == sorted(ids), "oldest first"
@@ -206,6 +211,8 @@ async def check_messages(td: FakeTd, server: WindowServer, chats: ChatStore, w: 
         assert len(w.take("messages.page")) == 1
     ids = [int(m["id"]) for m in w.messages]
     assert ids == sorted(ids) and ids == [m["id"] for m in td.history[13]], len(ids)
+    first_unread = next(m for m in w.messages if int(m["id"]) > refs["last_read"] and not m["out"])
+    assert int(first_unread["id"]) == refs["first_unread"], first_unread
     by_id = {m["id"]: m for m in w.messages}
     photo, question = by_id[str(refs["photo"])], by_id[str(refs["question"])]
     assert photo["kind"] == "photo" and photo["detail"] == "1280 × 960", photo

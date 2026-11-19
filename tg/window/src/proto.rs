@@ -244,6 +244,12 @@ pub enum Event {
         rows: Vec<MessageRow>,
         /// Older ones exist.
         more: bool,
+        /// The last message that was read before the chat was opened, when some were
+        /// unread: the first unread one is the first incoming message after it, which may
+        /// be older than `rows` (the window then asks for older pages to jump to it).
+        last_read: Option<Id>,
+        /// How many were unread when it was opened.
+        unread: u32,
     },
     /// `messages.page`: a page of older messages, oldest first.
     MessagesPage {

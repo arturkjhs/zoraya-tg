@@ -67,8 +67,13 @@ struct Slot {
 #[derive(Clone, Copy)]
 enum Item {
     Day(i64),
+    /// The line above the first unread message.
+    Unread,
     Msg(usize),
 }
+
+/// The height of the "Unread messages" line.
+const UNREAD_LINE: i32 = 30;
 
 pub struct Messages {
     pub id: u32,
@@ -87,6 +92,14 @@ pub struct Messages {
     max_scroll: i32,
     /// The visible messages' bubbles from the last paint.
     hits: Vec<(usize, paint::Rect)>,
+    /// The position (after the last layout): messages wholly below the view, and
+    /// whether the first unread message is above it or not loaded yet.
+    newer: usize,
+    unread_above: bool,
+    /// The position's pills, physical, where a press goes to the first unread message or
+    /// to the newest.
+    pill_unread: Option<paint::Rect>,
+    pill_newer: Option<paint::Rect>,
     wheel: WheelSteps,
     held: bool,
     /// The scale's factor at the last paint.
@@ -117,6 +130,10 @@ impl Messages {
             total: 0,
             max_scroll: 0,
             hits: Vec::new(),
+            newer: 0,
+            unread_above: false,
+            pill_unread: None,
+            pill_newer: None,
             wheel: WheelSteps::default(),
             held: false,
             k: 1,
@@ -285,6 +302,7 @@ impl Messages {
             self.laid.clear();
         }
         let margin = region.h / 2;
+        let unread = m.first_unread();
         // The view's bottom and top, as distances up from the content's bottom.
         let low = m.scroll * k - 8 * k - margin;
         let high = m.scroll * k + region.h + margin;
@@ -337,6 +355,12 @@ impl Messages {
                 self.placed.push((Item::Msg(i), below, slot.h));
             }
             below += slot.h + slot.above;
+            if unread == Some(i) {
+                if near {
+                    self.placed.push((Item::Unread, below, UNREAD_LINE * k));
+                }
+                below += UNREAD_LINE * k;
+            }
             if slot.day {
                 if near {
                     self.placed.push((Item::Day(msg.row.date), below, 34 * k));
@@ -424,8 +448,75 @@ impl Messages {
         }
         m.stats.laid = laid_now;
         m.stats.held = self.laid.len() as u32;
+        self.position(&m, region);
         if m.scroll + 240 >= self.max_scroll {
             m.want_older();
+        }
+    }
+
+    /// Where the view is: how many messages are wholly below it, and whether the first
+    /// unread one is above it (or older than what is loaded). One addition a message, from
+    /// the heights the slots keep.
+    fn position(&mut self, m: &Model, region: paint::Rect) {
+        let k = self.k;
+        let unread = m.first_unread();
+        let low = m.scroll * k - 8 * k;
+        let high = low + region.h;
+        let (mut below, mut newer, mut above) = (0, 0, m.unread_not_loaded());
+        for (i, slot) in self.slots.iter().enumerate().rev() {
+            if below + slot.h <= low {
+                newer += 1;
+            }
+            below += slot.h + slot.above;
+            if unread == Some(i) {
+                // Its line is above it: the message counts as above the view when its own
+                // top is.
+                above |= below > high;
+                below += UNREAD_LINE * k;
+            }
+            if slot.day {
+                below += 34 * k;
+            }
+        }
+        self.newer = newer;
+        self.unread_above = above;
+    }
+
+    /// The position indicator: a thumb at the region's right edge (where the view is in
+    /// what is loaded; `more` older pages are not counted), a pill at the top for the first
+    /// unread message while it is above the view, one at the bottom with the count of newer
+    /// messages while the view is not at the newest.
+    fn paint_position(&mut self, p: &mut Painter, c: &mut Canvas<'_>, m: &Model, region: paint::Rect) {
+        let k = p.scale.factor() as i32;
+        let pal = p.palette;
+        self.pill_unread = None;
+        self.pill_newer = None;
+        let content = self.total + 16 * k;
+        if content > region.h && self.max_scroll > 0 {
+            let track = region.h - 8 * k;
+            let h = (track * region.h / content).max(24 * k);
+            // scroll 0 is the bottom.
+            let frac = (m.scroll as i64 * 1000 / self.max_scroll as i64) as i32;
+            let y = region.y + 4 * k + (track - h) * (1000 - frac) / 1000;
+            let thumb = draw::rect(region.right() - 5 * k, y, 3 * k, h);
+            draw::round(c, thumb, (k + k / 2) as u32, pal.border_strong);
+        }
+        let cpx = text::CAPTION.physical(p.scale);
+        let pill = |p: &mut Painter, c: &mut Canvas<'_>, s: &str, y: i32| {
+            let w = p.ui.measure(s, cpx) + 24 * k;
+            let r = draw::rect(region.right() - 14 * k - w, y, w, 24 * k);
+            draw::round(c, r, (12 * k) as u32, pal.accent);
+            let base = draw::baseline(r.y, r.h, cpx);
+            draw::text(c, &mut p.ui, s, cpx, r.x + 12 * k, base, pal.fg_text_on_accent, r);
+            r
+        };
+        if self.unread_above && m.unread_open > 0 {
+            let s = format!("{} unread · U", m.unread_open);
+            self.pill_unread = Some(pill(p, c, &s, region.y + 10 * k));
+        }
+        if m.scroll > 0 && self.newer > 0 {
+            let s = format!("{} newer · End", self.newer);
+            self.pill_newer = Some(pill(p, c, &s, region.bottom() - 34 * k));
         }
     }
 
@@ -600,7 +691,8 @@ impl Widget for Messages {
         self.arrange(p);
         let k = p.scale.factor() as i32;
         let region = self.region(p);
-        let m = self.model.borrow();
+        let model = self.model.clone();
+        let m = model.borrow();
         let pal = p.palette;
         c.fill(self.rect.physical(p.scale), pal.bg_window);
         self.hits.clear();
@@ -618,6 +710,13 @@ impl Widget for Messages {
                 Item::Day(date) => {
                     let s = time::day_label(date, now, offset);
                     Messages::pill(p, c, &s, region.x + region.w / 2, y + 8 * k, region);
+                }
+                Item::Unread => {
+                    // An accent line across, with the words in the middle.
+                    let mid = y + UNREAD_LINE * k / 2;
+                    let line = draw::rect(region.x + SIDE * k, mid, region.w - 2 * SIDE * k, k);
+                    c.fill(line.intersect(&region), pal.accent);
+                    Messages::pill(p, c, "Unread messages", region.x + region.w / 2, mid - 11 * k, region);
                 }
                 Item::Msg(i) => {
                     let msg = &m.messages[i];
@@ -650,6 +749,7 @@ impl Widget for Messages {
             let base = draw::baseline(region.y + region.h / 2 - 10 * k, 20 * k, px);
             draw::text(c, &mut p.ui, s, px, region.x + (region.w - w) / 2, base, pal.fg_text_secondary, region);
         }
+        self.paint_position(p, c, &m, region);
         self.paint_header(p, c, &m);
         if focused {
             focus_ring(p, c, LRect::new(
@@ -674,7 +774,8 @@ impl Widget for Messages {
                     key::PAGE_UP => m.scroll = (m.scroll + page).min(self.max_scroll),
                     key::PAGE_DOWN => m.scroll = (m.scroll - page).max(0),
                     keys::HOME => m.scroll = self.max_scroll,
-                    keys::END => m.scroll = 0,
+                    keys::END => m.jump_newest(),
+                    key::U => m.jump_unread(),
                     keys::ENTER => m.activate_cursor(),
                     key::R => m.reply_to_cursor(),
                     keys::ESC => {
@@ -692,6 +793,15 @@ impl Widget for Messages {
                 };
                 // The hits are physical, the event logical.
                 let (px, py) = (draw::num(x) * self.k, draw::num(y) * self.k);
+                // The position's pills first: to the first unread, to the newest.
+                if self.pill_unread.is_some_and(|r| r.contains(px, py)) {
+                    m.jump_unread();
+                    return Response::Changed(self.id);
+                }
+                if self.pill_newer.is_some_and(|r| r.contains(px, py)) {
+                    m.jump_newest();
+                    return Response::Changed(self.id);
+                }
                 match self.hits.iter().find(|(_, r)| r.contains(px, py)) {
                     // A press on a failed message that is already chosen sends it again.
                     Some((i, _))

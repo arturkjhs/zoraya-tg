@@ -155,6 +155,8 @@ pub fn decode(line: &str) -> Option<Event> {
             kind: chat_kind(&s("kind")),
             rows: rows_of(v.get("rows"), message_row),
             more: b("more"),
+            last_read: id_of(v.get("last_read")),
+            unread: u("unread"),
         },
         "messages.page" => Event::MessagesPage {
             chat: chat()?,

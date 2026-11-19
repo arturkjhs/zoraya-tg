@@ -478,7 +478,9 @@ fn account() -> Vec<Chat> {
             pool[(i * 7 + i / 10) % 10],
         ));
     }
-    b.chat("Project archive", g, "12 members", 0, false, true, &lines);
+    // 120 of them unread: more than a page, so the jump to the first unread one loads
+    // older pages first.
+    b.chat("Project archive", g, "12 members", 120, false, true, &lines);
     for c in &mut b.chats {
         // What is not read yet came from the others.
         let n = c.messages.len();
@@ -913,6 +915,21 @@ impl Backend for SampleBackend {
             Request::ChatOpen { chat, count } => {
                 let Some(c) = self.chat(chat) else { return };
                 c.unread_at_open = c.row.unread;
+                // The last read: the message before the first of the `unread` newest
+                // incoming ones.
+                let unread = c.row.unread as usize;
+                let first_unread = (unread > 0)
+                    .then(|| {
+                        c.messages
+                            .iter()
+                            .enumerate()
+                            .rev()
+                            .filter(|(_, m)| !m.out && m.kind != MessageKind::Service)
+                            .nth(unread - 1)
+                            .map(|(i, _)| i)
+                    })
+                    .flatten();
+                let last_read = first_unread.and_then(|i| i.checked_sub(1)).map(|i| c.messages[i].id);
                 c.row.unread = 0;
                 let from = c.messages.len().saturating_sub(count as usize);
                 let e = Event::MessagesReset {
@@ -922,6 +939,8 @@ impl Backend for SampleBackend {
                     kind: c.row.kind,
                     rows: c.messages[from..].to_vec(),
                     more: from > 0,
+                    last_read,
+                    unread: unread as u32,
                 };
                 self.open = Some(chat);
                 self.queue.push_back(e);
