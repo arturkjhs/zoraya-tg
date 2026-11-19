@@ -420,9 +420,11 @@ impl Messages {
                     .iter()
                     .find(|(it, ..)| matches!(it, Item::Msg(i) if *i == c))
             {
-                // The content's bottom is 8 above the region's when not scrolled.
+                // The content's bottom is 8 above the region's when not scrolled. The
+                // first unread message is shown with its line above it.
+                let line = if m.first_unread() == Some(c) { UNREAD_LINE } else { 0 };
                 let below = (self.total - (top + h)) / k;
-                let above = (self.total - top) / k + 16 - region.h / k;
+                let above = (self.total - top) / k + 16 + line - region.h / k;
                 if m.scroll > below {
                     m.scroll = below;
                 } else if m.scroll < above {

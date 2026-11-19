@@ -4,12 +4,12 @@
 
 | | |
 |---|---|
-| **Result** | **Stage A is done.** The window `tg` with its built-in sample backend runs inside Zoraya from the dock; the design and the protocol are in `docs/tg-window.md`. |
+| **Result** | **Stage B steps 1 to 4 are done; the window is ready for the architect's real login** ("The real login", below). Stage A is done: the window with its sample backend. |
 | What works | The chat list (initials, name, last line, time, unread count, pinned, muted) as a window of the backend's rows, scrolled by the wheel and the keys; the chat view (bubbles in and out, replies, forwards, edited, dates, links, bold and code, service lines; photos, stickers, voice and files as labelled placeholders), anchored at the newest message, older pages loaded on the way up; the composer (several lines, Enter sends, Shift+Enter a line, replies); search; the AI summary card with three scopes, its text arriving in parts; the login (phone, code, a password drawn as dots); settings and log out; light and dark; scale 1 and 2; one pane in a narrow window; every control by Tab and keys; selection of whole messages and copy (System+C); paste (System+V). New messages, confirmations and read marks come from the sample's timers as the protocol's diffs. |
-| Tests | `make test-tg-host`: 33 host tests (the model over the sample backend, the list's diffs over 600 random steps, the widgets through `zoraya-ui`'s window at both scales in both themes, the windowed layout of a 1000-message chat). `make test-tg-window`: `tests/tg-window.script`, 111 steps under HVF through Zoraya's GUI test runner, at scale 1 and at scale 2: **PASS**, each scale twice. |
-| Screens | `docs/shots/tg-*.png` (scale 1, 1024 × 768) and `tg-*@2x.png` (scale 2, 2048 × 1536); synthetic data only. |
-| Zoraya | `origin/main` at `3292aa28`, as the local clone `../zoraya-tgw` with no remote; two overlay patches (16 changed lines). Nothing of this is in the public repository. |
-| Requests | `docs/requests.md`: R20, R21, R22 new. |
+| Tests | Host: `cargo test -p tg-window` 44 (the model, the widgets, protocol 3's wire and JSON, the socket backend over a fake transport, the jump to the first unread); `make test-tgd-vm` 5 checks and `make test-tgd-window` 8 steps (tgd's view-models and its socket front end over a fake TDLib). Under HVF: `make test-tg-window` (stage A, 111 steps a scale), `make test-tg-socket` (stage B: 47 steps on the console, then 61 on the desktop, at scale 1 and 2) and `make test-tg-real-start` (the real tgd with TDLib, 29 steps): **PASS**, each twice. |
+| Screens | `docs/shots/tg-*.png` (stage A), `tgs-*.png` (stage B, synthetic account), `tgr-*.png` (the real tgd's login form), each at scale 1 and `@2x`; synthetic data only. |
+| Zoraya | `origin/main` at `f9fcaa51` (10j, ADR-0465, ADR-0466's BIND), as the local clone `../zoraya-tgw` with no remote; three overlay patches (below). Nothing of this is in the public repository. |
+| Requests | `docs/requests.md`: R20, R21, R22 (with its second half as built), R23, R24. |
 | Secrets | None read, printed or committed. Every name and message in the window is invented (`tg/window/src/sample.rs`); the sample's login takes any number, the code `12345` and the password `zoraya`, which are not credentials of anything. |
 
 ## How it is built
@@ -43,6 +43,7 @@
 |---|---|---|
 | `0001-extra-programs-in-the-ramdisk.patch` | `Makefile`: `EXTRA_PROGRAMS` (ELF files added to the ramdisk), `EXTRA_APPS` exported to the build | R21: native programs from outside the repository in the image |
 | `0002-extra-applications-in-the-dock.patch` | `zoraya-panel`: `apps()` = the four of `APPS`, then the names of `ZORAYA_EXTRA_APPS`; the dock's text and a tile's press use it | R22: a dock tile and a launch record for a program that is not one of the four |
+| `0003-a-window-for-an-installed-native-program.patch` | `zoraya-describe`: a volume description may say `window TITLE`; `zosh`: an installed native program with it gets its window from the panel (ADR-0317's request, the line's grants as pills) at slot 5 and the console at slot 1, beside its start-up record with the saved words; `zoraya-panel`: a `+sock PATH` pill is taken (R24). 144 changed lines with their tests. | R22's second half; R24 |
 | (no patch) | the heap and the platform copied into `tg/tg` | R20: the parts of a native window program as crates of their own |
 
 `make overlay` applies them once and refuses a clone that has a remote.
@@ -140,7 +141,7 @@ Sizes: `tg` 1 384 KiB; Zoraya's ramdisk with it 29.7 MB.
   pressed, left and released outside ignores the next press once.
 - **Not in stage A**: search in messages, drafts, typing, mentions, reactions, editing and deleting, media, several
   accounts; the protocol's table in `docs/tg-window.md` names where each goes.
-- **`tg` from a terminal**: not possible in Zoraya today (R22).
+- **`tg` from a terminal**: as an installed program, with overlay 0003 (R22). From the dock it is `tg-sample`, the sample backend.
 
 ## What stage B waits for
 
@@ -217,3 +218,80 @@ and nothing of tgclient's data or sessions is opened. Five checks, **passed twic
 **Next (step 2):** `tgd` creates the `WindowServer` over its core's client and stores, with the `AuthController` as
 the AuthFlow's UI. It listens on a socket file in its own directory (ADR-0465). `tg`'s `SocketBackend` serialises
 `tg_window::proto` over it, with a saved `+sock` grant.
+
+## Stage B steps 2 to 4 (2026-11-19)
+
+The TASK-31 dispatcher paused; `../zoraya-tgw` is at `origin/main`'s `f9fcaa51`. Built here (the Mac mini) with
+`CARGO_BUILD_JOBS=4`, one QEMU at a time: Zoraya's ports (C++, zlib, OpenSSL, Python 3.15.2) in `../zoraya-tgw`,
+TDLib for Zoraya (192 s at `-j4`), python3 with `_tdjson`, `/bin/tgd` (64 MiB), the image with the overlay.
+
+**Step 2: the socket, and protocol 3.**
+- `tgd --window` listens on `window.sock` in its own directory (`~/.config/tgd`, which is `/data/home/tgd`): on
+  Zoraya a `SOCK_SEQPACKET` socket whose packets carry the JSON lines in pieces of at most 60 KiB (a line may be
+  longer than a packet: a `messages.reset` of long messages is). One window at a time; a new one hears everything
+  from the start. The window's `AuthController` is AuthFlow's UI; the core tells it ready, failed or logged out. The
+  api id and hash are asked on tgd's terminal, once (kept in its own directory). Ctrl-C and `kill` end it cleanly
+  (signals reach the loop through a wakeup descriptor: on Zoraya they land on TDLib's threads).
+- `tg` finds the `+sock` entry of its start-up record, opens the node with `CONNECT` and sends `SocketConnect`
+  with a seqpacket channel end, as `libposix`'s `connect` does (`tg/tg/src/link.rs`). While tgd is not there the
+  window says what to do and tries again every 2 s. From the dock (no start-up record, no grant) it is `tg-sample`,
+  the sample backend, titled `Telegram (sample)`.
+- Protocol 3: a failed send is `failed` (an error mark, `Not sent, Enter to retry`), never pending; Enter or a second
+  press sends `messages.retry`, which tgd turns into TDLib's `resendMessages`.
+- `tgd --window --synthetic`: an invented account (`tgd/tgd/synthetic.py`, the fake TDLib of the host tests) through
+  the same view-models and socket, with no TDLib and no network; the GUI test uses it.
+
+**Step 3: installed.** Install needs the volume's root, which only the console's shell holds (a terminal of the
+desktop holds what `home` gives, ADR-0242's condition), so the volume is prepared on the console and used on the
+desktop. The lines (`tgd --install-line` prints the first):
+
+```
+install /packages/tgd +own ~/.config/tgd +net 91.108.56.0/22:443 +net 91.108.4.0/22:443 +net 91.108.8.0/22:443 +net 91.108.16.0/22:443 +net 91.108.12.0/22:443 +net 149.154.160.0/20:443 +net 91.105.192.0/23:443 +net 91.108.20.0/22:443 +net 185.76.151.0/24:443 +net openrouter.ai:443
+install /packages/tg +sock /data/home/tgd/window.sock
+```
+
+`programs tgd` and `programs tg` (ADR-0399's page; there is no `programs show` word) list exactly these:
+`tests/tg-install.script` checks each saved row line by line (`^`), so a row more or less fails it. tgd's page:
+`+own ~/.config/tgd` and the ten `+net` words; tg's: `+sock /data/home/tgd/window.sock`. tg's window shows the pills
+`+r /home` (the current directory), `+r /apps/tg` (its package) and `+sock /data/home/tgd/window.sock`; it holds no
+network and none of tgd's files. The volume has no `/bin/tgd`: `/bin` is on `shell.path`, which comes before the
+installed names. Known: tgd asks for `/dev/urandom` once (TDLib); the terminal offers `+r /dev`, which is not needed
+(the randomness is `getrandom`, `patches/td/0004`).
+
+**Step 4: where the view is.** A thumb at the messages' edge; `N newer · End` while above the newest; `N unread · U`
+while the first unread message is above the view or not loaded; tgclient's `Unread messages` line above it. U or a
+press on the pill loads older pages (200 at a time) until it is there and brings it, with its line, to the view's
+top. `messages.reset` gives `last_read` and `unread` (the server keeps tgclient's boundary and loads the newest page).
+
+**Tests.** `make test-tg-socket` (twice, scale 1 and 2): the console's boot installs both and checks both pages; the
+desktop's boot runs `tgd --window --synthetic &` and `tg &`: the login through tgd's AuthController (a wrong code
+refused), the list, the club opened with 47 unread and the jump through an older page, a send confirmed, a failed
+send and its retry, tgd killed (`tgd went away`) and started again (found again, the login asked again).
+`make test-tg-real-start` (twice): the real tgd with TDLib, placeholder credentials on the test DC and no network:
+the api id and hash asked on the terminal, Ctrl-C, `tgd --window &` (nothing asked now), `tg &`: the window shows
+the phone form (`docs/shots/tgr-window.png`).
+
+**Found and fixed on the way:** the panel refused a window with a `+sock` pill (R24, overlay 0003); TDLib's
+`realpath` failed in the own directory (R23, `patches/td/0006`); tgclient's `td` imports `ctypes` (the binding is
+installed before the view-models); `install` refused `tg` while the ramdisk had a program of that name (the dock's
+copy is `tg-sample`); a SIGINT inherited ignored by a job started with `&`, and a signal that never woke the loop.
+
+## The real login (the architect, by hand)
+
+1. On the Mac mini, in `~/workspace/zoraya-tg`: `make run-tg-login`. The first time it makes the volume
+   (`build/tgs/disk.img`), installs both on the console (an automatic boot, about a minute), then starts the desktop
+   with the Internet (SLIRP, no `--test`). Later runs keep the volume and the login; `FRESH=1` makes it again.
+2. In the desktop's terminal: `tgd --window`. It asks `api id:`, `api hash:` and the OpenRouter key for the AI
+   summary (Enter for none; neither is shown) and keeps them in its own directory. When it says `tgd: login: starting`, press Ctrl-C (`tgd: ended`).
+3. `tgd --window &` (it asks nothing now), then `tg &`. The window opens with the pill `+sock
+   /data/home/tgd/window.sock`.
+4. In the window: the phone number (with the country's code), Next; the code; the password if the account has one
+   (drawn as dots). The list comes.
+5. To check: open a chat, send a message, the summary (Settings: turn on AI summaries of the chat, then Summary),
+   the jump to the first unread (U).
+6. A restart keeps the login: `kill %1` (tgd; the window says `tgd went away`), `tgd --window &`: the window finds
+   it again and shows the list without asking. Power off with `poweroff` in a terminal, `make run-tg-login` again:
+   `tgd --window &`, `tg &`, the list.
+
+tgd's log is `~/.config/tgd/tgd.log` inside Zoraya (TDLib's `td.log` beside it); neither holds message text, names,
+codes or passwords. The window prints nothing of the account (it prints only for synthetic data).

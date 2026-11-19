@@ -228,3 +228,28 @@ the room's grants; without the variable the dock is as today.
   that `exec`s it gets no random bytes, so the interpreter does not start; closed by linking the launcher's
   `main` into the interpreter itself (`tgd/tgd_main.c`, `ports/tgd-link.mk`).
 - Starting a script by its `#!` line: the shell starts ELF programs only; closed the same way.
+
+## R23: `realpath` inside a program's own directory
+
+**What.** `libposix`'s `realpath` of a path inside an `Own` entry (ADR-0341: the directory seen at its view path,
+`~/.config/NAME`) walks the path from `/` through the other entries, where the view path's parents (`~/.config`)
+need not exist; it fails with ENOENT although every name of the path resolves through the table. It should resolve
+the path as `open` does (longest prefix entry first), so that a program that canonicalises its data directory
+(SQLite, TDLib, many others) works in its own directory.
+
+**Why.** A program installed with `+own` keeps its data there; ports commonly call `realpath` on their data
+directory before they open it.
+
+**Until then.** `patches/td/0006-realpath-of-an-own-directory-on-zoraya.patch` (TDLib takes the path as given).
+**Minimal test:** a program with `+own ~/.config/demo` calls `realpath("~/.config/demo/db")` after `mkdir`: the
+result is that path (or its real one), not ENOENT.
+
+## R24: a socket file's pill in a window's record
+
+**What.** `zosh`'s `window_pills` writes a `+sock PATH` pill for a socket file's grant (ADR-0465), and the panel's
+`window_record` refuses every pill that is not `+r`, `+w`, `+net` or `web`, so a window program given a socket file
+gets no window at all ("the panel does not accept this window request"). The panel should take `+sock PATH` (one
+prefix more in the check). In `overlay/0003` (crates/zoraya-panel, with a test).
+
+**Minimal test:** `window_record(None, "demo", "Demo", "+sock /data/home/srv/s.sock")` is accepted; `+socket ...` is
+not.

@@ -53,6 +53,40 @@ index 6bcf2b3b..9f1f6cba 100644
  }
  
  #[test]
+diff --git a/crates/zoraya-panel/src/lib.rs b/crates/zoraya-panel/src/lib.rs
+index 97e9bebd..98ae2e1e 100644
+--- a/crates/zoraya-panel/src/lib.rs
++++ b/crates/zoraya-panel/src/lib.rs
+@@ -657,8 +657,10 @@ pub fn window_record(
+     let mut count = 0;
+     for l in entries.split('\n').filter(|l| !l.is_empty()) {
+         count += 1;
+-        // `web` is the web rule's pill (ADR-0324 item 6), exactly that word.
+-        let word = l == "web" || ["+r ", "+w ", "+net "].iter().any(|p| l.starts_with(p));
++        // `web` is the web rule's pill (ADR-0324 item 6), exactly that word;
++        // `+sock PATH` the pill of a socket file's grant (ADR-0465), which
++        // the shell's `window_pills` writes.
++        let word = l == "web" || ["+r ", "+w ", "+net ", "+sock "].iter().any(|p| l.starts_with(p));
+         if count > 16 || !word || l.len() > 200 || !plain(l) {
+             return Err(why::INVALID);
+         }
+diff --git a/crates/zoraya-panel/src/tests.rs b/crates/zoraya-panel/src/tests.rs
+index 0acd46de..f590c16a 100644
+--- a/crates/zoraya-panel/src/tests.rs
++++ b/crates/zoraya-panel/src/tests.rs
+@@ -664,6 +664,12 @@ fn a_window_is_for_a_trusted_rooms_shell_only() {
+         window_record(trusted.as_ref(), "netsurf", "NetSurf", &long),
+         Err(why::INVALID)
+     );
++    // A socket file's pill (ADR-0465), as the shell writes it (local overlay).
++    assert!(window_record(None, "demo", "Demo", "+sock /data/home/srv/s.sock").is_ok());
++    assert_eq!(
++        window_record(None, "demo", "Demo", "+socket /data/home/srv/s.sock"),
++        Err(why::INVALID)
++    );
+     // `web` is a pill only as that one word (ADR-0324 item 6).
+     for bad in ["webs", "web x", "Web", " web"] {
+         assert_eq!(
 diff --git a/crates/zoraya-settings/src/tests_apps.rs b/crates/zoraya-settings/src/tests_apps.rs
 index 2c6e1f6c..c67132e3 100644
 --- a/crates/zoraya-settings/src/tests_apps.rs

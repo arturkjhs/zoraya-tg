@@ -138,7 +138,7 @@ def main(argv: list[str] | None = None) -> int:
 
     from . import binding  # noqa: PLC0415
 
-    kind = "none" if args.synthetic else binding.choose(args.binding)
+    kind = binding.choose(args.binding)
 
     if not args.no_probe and not args.synthetic:
         try:
@@ -166,6 +166,16 @@ def main(argv: list[str] | None = None) -> int:
             f"tgd: cannot write the data directory {data_dir}: {e.strerror}{hint}")
         return 4
 
+    # Ctrl-C and kill end tgd cleanly (the lock, the window's socket file): a job started
+    # with & may have inherited SIGINT ignored, and SIGTERM would end it at once.
+    import signal  # noqa: PLC0415
+
+    def _stop(_number: int, _frame: object) -> None:
+        raise KeyboardInterrupt
+
+    with contextlib.suppress(ValueError, OSError):
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+        signal.signal(signal.SIGTERM, _stop)
     lock = Lock(data_dir)
     problem = lock.take()
     if problem:
@@ -217,7 +227,8 @@ def _window_say(event: dict) -> None:
                          f"data in {event.get('data')}\n")
     elif kind == "auth.state":
         state = event.get("state")
-        sys.stderr.write("tgd: logged in\n" if state == "ready" else f"tgd: login: {state}\n")
+        why = f" ({event['message']})" if state == "failed" and event.get("message") else ""
+        sys.stderr.write("tgd: logged in\n" if state == "ready" else f"tgd: login: {state}{why}\n")
     elif kind == "auth.error":
         sys.stderr.write(f"tgd: Telegram refused it: {event.get('message', '')}\n")
     sys.stderr.flush()
@@ -225,6 +236,9 @@ def _window_say(event: dict) -> None:
 
 async def _run_window(args: argparse.Namespace, data_dir: Path, kind: str,
                       api_file: Path | None) -> int:
+    from . import binding  # noqa: PLC0415
+
+    binding.install(kind)  # tgclient.td imports tdjson, which needs ctypes without it
     from vm.auth import AuthController  # noqa: PLC0415
     from vm.server import WindowServer  # noqa: PLC0415
 
@@ -236,21 +250,29 @@ async def _run_window(args: argparse.Namespace, data_dir: Path, kind: str,
     auth = AuthController()
     front = WindowFrontEnd((args.socket or data_dir / SOCKET_NAME).expanduser())
     if args.synthetic:
-        return await _run_synthetic(front, auth, log)
+        return await _run_synthetic(front, auth, log, kind)
     core = Core(data_dir=data_dir, test_dc=args.test_dc, binding=kind,
                 tdjson_path=args.tdjson or os.environ.get("TDJSON_PATH"),
                 api_file=api_file, emit=_window_say, td_log_level=args.td_log, auth_ui=auth)
     try:
         await core.start()
         # The api id and hash, once, on this terminal (the window has no form for them).
+        text: Any = None
         while core.client is None:
-            text = TextFrontEnd()
-            text.reader = LineReader(asyncio.get_running_loop())
+            if text is None:  # one reader of the terminal
+                text = TextFrontEnd()
+                text.reader = LineReader(asyncio.get_running_loop())
             sys.stderr.write("api id and hash from my.telegram.org (kept in the data directory)\n")
             api_id = await text._ask("api id: ")
             api_hash = await text._ask("api hash: ", secret=True) if api_id is not None else None
             if api_id is None or api_hash is None:
                 return 0
+            # The AI's key, optional, once (kept with the credentials, which start TDLib):
+            # the window has no field for it.
+            if not core.credentials.openrouter_key:
+                key = await text._ask("OpenRouter key for the AI summary (Enter: none): ",
+                                      secret=True)
+                core.credentials.openrouter_key = (key or "").strip()
             try:
                 core.set_credentials(api_id, api_hash)
             except CoreError as e:
@@ -269,17 +291,25 @@ async def _run_window(args: argparse.Namespace, data_dir: Path, kind: str,
         sys.stderr.write(f"tgd: the window's socket is {front.path}; start tg (Ctrl-C ends tgd)\n")
         sys.stderr.flush()
         await front.run()
+        if front.stopped_by_signal:
+            sys.stderr.write("tgd: ended\n")
+            return 0
         return 7
     finally:
         front.close()
         await core.close()
 
 
-async def _run_synthetic(front: Any, auth: Any, log: logging.Logger) -> int:
+async def _run_synthetic(front: Any, auth: Any, log: logging.Logger, kind: str) -> int:
     """tgd --window --synthetic: the invented account of synthetic.py through the same
-    view-models and socket, for the window's tests and a look before a login."""
+    view-models and socket, for the window's tests and a look before a login. TDLib is not
+    started; its binding is only installed, so that tgclient.td imports (on Zoraya without
+    ctypes, binding.py)."""
     import time  # noqa: PLC0415
 
+    from . import binding  # noqa: PLC0415
+
+    binding.install(kind)
     from vm.server import WindowServer  # noqa: PLC0415
 
     from .synthetic import NOW, Account, login  # noqa: PLC0415
@@ -304,6 +334,9 @@ async def _run_synthetic(front: Any, auth: Any, log: logging.Logger) -> int:
     sys.stderr.flush()
     try:
         await front.run()
+        if front.stopped_by_signal:
+            sys.stderr.write("tgd: ended\n")
+            return 0
         return 7
     finally:
         for t in tasks:

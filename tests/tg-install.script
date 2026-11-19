@@ -1,0 +1,45 @@
+# TG-04 stage B: tgd and tg installed from the volume's /packages with their saved grants, on
+# the console (make test-tg-socket's first boot, and make tg-install before run-tg-login).
+# Only the console's shell holds the volume's root, which install needs: a terminal of the
+# desktop holds what home gives (ADR-0242's condition). Then each program's page lists
+# exactly what it holds, and the machine is turned off; the desktop boots on this volume.
+# @GRANT@ is the line of tgd --install-line (tests/expand_script.py).
+! panicked
+! first process ended
+< Type help to begin, or help tour.
+< \r\n~>
+> @GRANT@\r
+limit 300 < tgd installed with:
+<   ~/.config/tgd  its own files
+<   net: openrouter.ai:443  reach
+< \r\n~>
+> install /packages/tg +sock /data/home/tgd/window.sock\r
+< tg installed with:
+<   /data/home/tgd/window.sock  connect to
+< \r\n~>
+> programs tgd\r
+< tgd is an installed program, /apps/tgd/tgd (sha256
+< saved grants:
+^ \r\n  +own ~/.config/tgd  ~/.config/tgd  its own files (saved)
+^ \r\n  +net 91.108.56.0/22:443  net: 91.108.56.0/22:443  reach (saved)
+^ \r\n  +net 91.108.4.0/22:443  net: 91.108.4.0/22:443  reach (saved)
+^ \r\n  +net 91.108.8.0/22:443  net: 91.108.8.0/22:443  reach (saved)
+^ \r\n  +net 91.108.16.0/22:443  net: 91.108.16.0/22:443  reach (saved)
+^ \r\n  +net 91.108.12.0/22:443  net: 91.108.12.0/22:443  reach (saved)
+^ \r\n  +net 149.154.160.0/20:443  net: 149.154.160.0/20:443  reach (saved)
+^ \r\n  +net 91.105.192.0/23:443  net: 91.105.192.0/23:443  reach (saved)
+^ \r\n  +net 91.108.20.0/22:443  net: 91.108.20.0/22:443  reach (saved)
+^ \r\n  +net 185.76.151.0/24:443  net: 185.76.151.0/24:443  reach (saved)
+^ \r\n  +net openrouter.ai:443  net: openrouter.ai:443  reach (saved)
+^ \r\nrunning: none
+< \r\n~>
+> programs tg\r
+< tg is an installed program, /apps/tg/tg (sha256
+< saved grants:
+^ \r\n  +sock /data/home/tgd/window.sock  /data/home/tgd/window.sock  connect to (saved)
+^ \r\nrunning: none
+< \r\n~>
+> grants tg\r
+< \r\n~>
+x power off
+> poweroff\r

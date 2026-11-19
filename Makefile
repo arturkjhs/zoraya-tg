@@ -41,7 +41,7 @@
 # ZORAYA is the Zoraya checkout used as toolchain and image, read-only but for
 # its build outputs; it must have run `make fetch-ports` and
 # `make -f ports/Makefile cxx zlib openssl python`.
-ZORAYA ?= $(HOME)/workspace/zoraya-main
+ZORAYA ?= $(abspath ../zoraya-tgw)
 TG := $(abspath .)
 B := $(TG)/build
 OUT := $(TG)/out
@@ -70,7 +70,7 @@ HOST_OPENSSL ?= $(shell brew --prefix openssl@3 2>/dev/null)
 logged = $(1) > $(LOGS)/$(2).log 2>&1 || { echo "$(2) failed: $(LOGS)/$(2).log"; tail -40 $(LOGS)/$(2).log; exit 1; }
 
 .PHONY: fetch td python root smoke clean wheels tgd host test-tgd-host test-tgd-vm test-tgd-window smoke-tgd smoke-tgd-net run-tgd \
-	overlay test-tg-host tg tg-image test-tg-window run-tg test-tg-socket run-tg-login
+	overlay test-tg-host tg tg-image test-tg-window run-tg test-tg-socket run-tg-login tg-install test-tg-real-start
 .SUFFIXES:
 
 fetch: $(B)/src/$(TD_FILE)
@@ -350,8 +350,13 @@ tg:
 
 # Zoraya's kernel with tg in its ramdisk (EXTRA_PROGRAMS) and in the dock (EXTRA_APPS), its
 # storage tools and its test runner; then the volume.
+# The ramdisk's copy is `tg-sample` (the dock's tile, the sample backend: it has no start-up
+# record and so no grant), so that the name `tg` stays free for the installed program
+# (install refuses a name an image command has).
+TG_SAMPLE := $(B)/tgw/tg-sample
 tg-image: tg overlay
-	cd $(ZTGW) && CARGO_BUILD_JOBS=$(JOBS) $(MAKE) build tools-storage EXTRA_PROGRAMS=$(TG_ELF) EXTRA_APPS=tg && \
+	@mkdir -p $(B)/tgw && cp $(TG_ELF) $(TG_SAMPLE)
+	cd $(ZTGW) && CARGO_BUILD_JOBS=$(JOBS) $(MAKE) build tools-storage EXTRA_PROGRAMS=$(TG_SAMPLE) EXTRA_APPS=tg-sample && \
 	  CARGO_BUILD_JOBS=$(JOBS) cargo build -q -p zoraya-test-runner
 	@mkdir -p $(B)/tgw $(LOGS)
 	$(tgw_disk)
@@ -405,14 +410,27 @@ $(STAGEB)/.stamp: $(OUT)/root/.stamp $(TG_ELF) packages/tg/tg.cmd packages/tgd/t
 	@touch $@
 tgs_disk = rm -f $(TGS_DISK) $(TGS_DISK).key && mkdir -p $(B)/tgs && cd $(ZTGW) && EXTRA_ROOT=$(STAGEB):$(TG)/tests/tg-window.root DISK_SIZE=$(TGS_DISK_SIZE) tools/run-disk.sh $(TGS_DISK)
 
-# The window over tgd's socket, both installed (tests/tg-socket.script): the install lines,
-# programs NAME for each, tgd --window --synthetic (an invented account: no TDLib, no
-# network), tg from the terminal; the login, the list, a chat, a failed send and its retry.
-test-tg-socket: tg-image $(STAGEB)/.stamp tests/tg-socket.script tests/ppm2png.py
+# The two programs installed on the stage B volume, on the console (tests/tg-install.script,
+# its long lines typed in pieces by tests/expand_script.py): install needs the volume's root,
+# which only the console's shell holds; a terminal of the desktop holds what home gives.
+TGS_INSTALL := $(B)/tgs/tg-install.script
+$(TGS_INSTALL): tests/tg-install.script tests/expand_script.py tgd/tgd/net.py tgd/tgd/telegram-cidr.txt
+	@mkdir -p $(B)/tgs
+	python3 tests/expand_script.py tests/tg-install.script "$$(cd tgd && python3 -c 'from tgd import net; print(net.install_line())')" > $@
+tgs_install = cd $(ZTGW) && target/debug/zoraya-test-runner --timeout 600 --script $(TGS_INSTALL) --label tg-install -- \
+	  tools/run-qemu.sh --test --keys --mem $(TGS_MEM) --disk $(TGS_DISK) --accel hvf build/zoraya-kernel.elf; rc=$$?; \
+	  cp target/test-logs/tg-install.log $(LOGS)/tg-install.log 2>/dev/null; [ $$rc = 0 ]
+
+# The window over tgd's socket (tests/tg-socket.script), on a fresh volume for each scale:
+# the console's boot installs both, the desktop's boot runs tgd --window --synthetic (an
+# invented account: no TDLib, no network) and tg from the terminal; the login, the list, a
+# chat, the jump to the first unread message, a send, a failed send and its retry, tgd gone
+# and back. One guest at a time.
+test-tg-socket: tg-image $(STAGEB)/.stamp $(TGS_INSTALL) tests/tg-socket.script tests/ppm2png.py
 	@for scale in $(TGS_SCALES); do \
 	  label=tg-socket-$$scale; \
-	  ( $(tgs_disk) && \
-	    target/debug/zoraya-test-runner --timeout $(TGS_TIMEOUT) --gui-script $(TG)/tests/tg-socket.script \
+	  ( $(tgs_disk) ) && ( $(tgs_install) ) || exit 1; \
+	  ( cd $(ZTGW) && target/debug/zoraya-test-runner --timeout $(TGS_TIMEOUT) --gui-script $(TG)/tests/tg-socket.script \
 	      --qmp build/$$label.qmp --label $$label -- \
 	      tools/run-qemu.sh --test --gui --gui-scale $$scale --mem $(TGS_MEM) --qmp build/$$label.qmp \
 	      --disk $(TGS_DISK) --accel hvf build/zoraya-kernel.elf ); rc=$$?; \
@@ -421,10 +439,26 @@ test-tg-socket: tg-image $(STAGEB)/.stamp tests/tg-socket.script tests/ppm2png.p
 	  python3 tests/ppm2png.py $(ZTGW)/build/shots docs/shots $$label || exit 1; \
 	done
 
+# The real tgd (TDLib) serving the window, with placeholder credentials and no network
+# (tests/tg-real-start.script): the start the architect's login goes through. Scale 1.
+test-tg-real-start: tg-image $(STAGEB)/.stamp $(TGS_INSTALL) tests/tg-real-start.script
+	( $(tgs_disk) ) && ( $(tgs_install) ) || exit 1
+	( cd $(ZTGW) && target/debug/zoraya-test-runner --timeout $(TGS_TIMEOUT) --gui-script $(TG)/tests/tg-real-start.script \
+	    --qmp build/tg-real-1.qmp --label tg-real-1 -- \
+	    tools/run-qemu.sh --test --gui --gui-scale 1 --mem $(TGS_MEM) --qmp build/tg-real-1.qmp \
+	    --disk $(TGS_DISK) --accel hvf build/zoraya-kernel.elf ); rc=$$?; \
+	  cp $(ZTGW)/target/test-logs/tg-real-1.log $(LOGS)/tg-real-1.log 2>/dev/null; \
+	  [ $$rc = 0 ] && python3 tests/ppm2png.py $(ZTGW)/build/shots docs/shots tg-real-1
+
+# For the architect: a fresh stage B volume with both installed (FRESH is implied).
+tg-install: tg-image $(STAGEB)/.stamp $(TGS_INSTALL)
+	$(tgs_disk)
+	$(tgs_install)
+
 # The architect's run: Zoraya's desktop with the network and a kept volume (FRESH=1 makes
 # it again), the packages on it, for the real login by hand (docs/tg-window-report.md).
-run-tg-login: tg-image $(STAGEB)/.stamp
-	@if [ -n "$(FRESH)" ] || [ ! -f $(TGS_DISK) ]; then $(tgs_disk); fi
+run-tg-login: tg-image $(STAGEB)/.stamp $(TGS_INSTALL)
+	@if [ -n "$(FRESH)" ] || [ ! -f $(TGS_DISK) ]; then ( $(tgs_disk) ) && ( $(tgs_install) ) || exit 1; fi
 	cd $(ZTGW) && tools/run-qemu.sh --gui --gui-scale $(or $(SCALE),2) --net --mem $(TGS_MEM) --disk $(TGS_DISK) --accel hvf build/zoraya-kernel.elf
 
 clean:

@@ -118,6 +118,7 @@ class WindowFrontEnd:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._listener: socket.socket | None = None
         self._stopped = asyncio.Event()
+        self.stopped_by_signal = False
         self._tasks: set[asyncio.Task[Any]] = set()
 
     # --- the socket ---------------------------------------------------------------------------
@@ -169,8 +170,44 @@ class WindowFrontEnd:
             self._conn.close()
             self._conn = None
 
+    def stop(self) -> None:
+        """Ctrl-C or kill: tgd ends cleanly (the caller closes the socket and the core)."""
+        self.stopped_by_signal = True
+        self._stopped.set()
+
     async def run(self) -> None:
+        """Until a signal (see `watch_signals`) or the listener stops."""
+        self.watch_signals()
         await self._stopped.wait()
+
+    def watch_signals(self) -> None:
+        """SIGINT and SIGTERM through the loop: on Zoraya the interpreter's thread is not the
+        one a signal is delivered to while TDLib's threads run (tgd_main.c blocks them in the
+        main thread), so Python's handler alone would wait for the loop to wake; the loop's
+        own handler is woken through its wakeup descriptor whichever thread takes it."""
+        import signal  # noqa: PLC0415
+
+        # By hand, as loop.add_signal_handler does it: Zoraya's python has no
+        # signal.siginterrupt, which that calls.
+        loop = asyncio.get_running_loop()
+        try:
+            ours, theirs = socket.socketpair()
+            ours.setblocking(False)
+            theirs.setblocking(False)
+            signal.set_wakeup_fd(theirs.fileno(), warn_on_full_buffer=False)
+        except (OSError, ValueError):
+            return
+        self._wakeup = (ours, theirs)
+
+        def drain() -> None:
+            with contextlib.suppress(OSError):
+                while ours.recv(256):
+                    pass
+
+        loop.add_reader(ours.fileno(), drain)
+        for number in (signal.SIGINT, signal.SIGTERM):
+            with contextlib.suppress(ValueError, OSError):
+                signal.signal(number, lambda _n, _f: loop.call_soon(self.stop))
 
     # --- connections --------------------------------------------------------------------------
 

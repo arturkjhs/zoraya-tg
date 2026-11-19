@@ -1,6 +1,7 @@
-# TG-04 stage B (make test-tg-socket, at scale 1 and 2): tgd and tg installed from the
-# volume's /packages with their saved grants, each program's page listing exactly what it
-# holds; tgd serving the window on the socket file in its own directory, with an invented
+# TG-04 stage B (make test-tg-socket, at scale 1 and 2), the desktop's boot: tgd and tg were
+# installed on this volume by the console's boot before it (tests/tg-install.script: install
+# needs the volume's root, which only the console's shell holds). tgd serves the window on
+# the socket file in its own directory, with an invented
 # account (--synthetic: no TDLib, no network, the code 12345 and the password zoraya,
 # which are not credentials of anything); tg started from the terminal as an installed
 # window program (overlay 0003), reaching tgd only through its saved +sock grant.
@@ -11,73 +12,10 @@ serial init: gui: gpu on its own page
 screen Type help to begin, or help tour.
 screen ~> _
 #
-# Installed with the words of the report: tgd its own directory, Telegram's nine IPv4
-# ranges on 443 and OpenRouter; tg the one socket file.
-type install /packages/tgd +own ~/.config/tgd +net 91.108.56.0/22:443 +net 91.108.4.0/22:443 +net 91.108.8.0/22:443 +net 91.108.16.0/22:443 +net 91.108.12.0/22:443 +net 149.154.160.0/20:443 +net 91.105.192.0/23:443 +net 91.108.20.0/22:443 +net 185.76.151.0/24:443 +net openrouter.ai:443\r
-screen tgd installed with:
-screen   ~/.config/tgd  its own files
-screen   net: 91.108.56.0/22:443  reach
-screen   net: 91.108.4.0/22:443  reach
-screen   net: 91.108.8.0/22:443  reach
-screen   net: 91.108.16.0/22:443  reach
-screen   net: 91.108.12.0/22:443  reach
-screen   net: 149.154.160.0/20:443  reach
-screen   net: 91.105.192.0/23:443  reach
-screen   net: 91.108.20.0/22:443  reach
-screen   net: 185.76.151.0/24:443  reach
-screen   net: openrouter.ai:443  reach
-screen ~> _
-chord ctrl l
-top ~> _
-type install /packages/tg +sock /data/home/tgd/window.sock\r
-screen tg installed with:
-screen   /data/home/tgd/window.sock  connect to
-screen ~> _
-#
-# What each holds, saved: exactly the words given, nothing else.
-chord ctrl l
-top ~> _
-type programs tgd\r
-prefix tgd is an installed program, /apps/tgd/tgd (sha256
-screen   tgclient's backend: TDLib, the stores, the services
-screen files:
-prefix   tgd
-prefix   tgd.cmd
-screen saved grants:
-screen   +own ~/.config/tgd  ~/.config/tgd  its own files (saved)
-screen   +net 91.108.56.0/22:443  net: 91.108.56.0/22:443  reach (saved)
-screen   +net 91.108.4.0/22:443  net: 91.108.4.0/22:443  reach (saved)
-screen   +net 91.108.8.0/22:443  net: 91.108.8.0/22:443  reach (saved)
-screen   +net 91.108.16.0/22:443  net: 91.108.16.0/22:443  reach (saved)
-screen   +net 91.108.12.0/22:443  net: 91.108.12.0/22:443  reach (saved)
-screen   +net 149.154.160.0/20:443  net: 149.154.160.0/20:443  reach (saved)
-screen   +net 91.105.192.0/23:443  net: 91.105.192.0/23:443  reach (saved)
-screen   +net 91.108.20.0/22:443  net: 91.108.20.0/22:443  reach (saved)
-screen   +net 185.76.151.0/24:443  net: 185.76.151.0/24:443  reach (saved)
-screen   +net openrouter.ai:443  net: openrouter.ai:443  reach (saved)
-screen ~> _
-pause 500
-shot tgs-programs-tgd
-chord ctrl l
-top ~> _
-type programs tg\r
-prefix tg is an installed program, /apps/tg/tg (sha256
-screen   the Telegram window, over tgd's socket
-screen files:
-prefix   tg
-prefix   tg.cmd
-screen saved grants:
-screen   +sock /data/home/tgd/window.sock  /data/home/tgd/window.sock  connect to (saved)
-screen ~> _
-pause 500
-shot tgs-programs-tg
-#
 # tgd in the background, serving the invented account; then the window.
-chord ctrl l
-top ~> _
 type tgd --window --synthetic &\r
 prefix tgd: the window's socket is
-type tg\r
+type tg &\r
 serial tg: login phone
 pause 1500
 click 500 119
@@ -99,7 +37,7 @@ shot tgs-list
 # The club (row 6): its newest 40 messages, Cyrillic, a photo's placeholder; 47 were
 # unread, more than the page, so the first unread one is not loaded yet: the pill at the
 # top right (accent 3b4f6b) says how many.
-click 255 558
+click 255 589
 then tg: opened "Книжковий клуб": 40 messages, last: Обкладинка
 then tg: unread 47
 then tg: chat "Книжковий клуб" unread 0
@@ -139,12 +77,11 @@ shot tgs-retried
 # tgd's timer: a message to another chat raises its count.
 serial tg: chat "Дмитро Шевченко" unread 2: Повідомлення з таймера 1
 #
-# tgd goes (Ctrl-C in the terminal): the window says so; started again, it is found
-# again by itself, and the (invented) login is asked again.
-click 85 400
-type fg\r
+# tgd goes (kill in the terminal, raised by a press on its title bar): the window says so;
+# started again, it is found again by itself, and the (invented) login is asked again.
+click 300 87
 pause 500
-chord ctrl c
+type kill %1\r
 then tg: waiting: tgd went away
 pause 500
 shot tgs-gone

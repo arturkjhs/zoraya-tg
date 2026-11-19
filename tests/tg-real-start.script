@@ -1,0 +1,37 @@
+# TG-04 stage B: the real tgd (TDLib, no account, no network) serving the window, on the
+# volume tests/tg-install.script made. tgd --window asks for the api id and hash on its
+# terminal (placeholders: api id 1 and a hash of zeros, which are no one's; the test DC);
+# TDLib starts and waits for a phone number. Ended with Ctrl-C and started again in the
+# background (the credentials kept), tgd serves tg, which connects and shows the login's
+# phone form (the screen tgr-window). Nothing is sent to Telegram: the guest has no network.
+serial init: gui: gpu on its own page
+screen Type help to begin, or help tour.
+screen ~> _
+type tgd --window --test-dc --no-probe\r
+prefix tgd 0.1.0, TDLib
+screen api id and hash from my.telegram.org (kept in the data directory)
+prefix api id:
+type 1\r
+prefix api hash:
+type 00000000000000000000000000000000\r
+prefix OpenRouter key for the AI summary (Enter: none):
+type \r
+prefix tgd: the window's socket is /home/.config/tgd/window.sock
+prefix tgd: login: starting
+pause 3000
+# Ctrl-C ends it (the credentials stay in its own directory); then tgd in the background,
+# which asks for nothing now, and tg.
+chord ctrl c
+prefix tgd: login: closed
+screen ~> _
+chord ctrl l
+top ~> _
+type tgd --window --test-dc --no-probe &\r
+prefix tgd: the window's socket is /home/.config/tgd/window.sock
+pause 3000
+shot tgr-tgd
+type tg &\r
+pause 6000
+click 500 119
+pause 1000
+shot tgr-window
