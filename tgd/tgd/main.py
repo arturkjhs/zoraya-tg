@@ -218,6 +218,15 @@ async def _run(args: argparse.Namespace, data_dir: Path, kind: str,
     return 0
 
 
+def _in_background() -> bool:
+    """Whether this process is not in its terminal's foreground (started with &), where a read
+    of the terminal would stop it. Unknown is foreground."""
+    try:
+        return os.tcgetpgrp(0) != os.getpgrp()
+    except OSError:
+        return not os.isatty(0)
+
+
 def _window_say(event: dict) -> None:
     """What the core says (protocol 1's events), on the terminal tgd --window runs in:
     the version and the login's state, never a name or a value."""
@@ -258,6 +267,11 @@ async def _run_window(args: argparse.Namespace, data_dir: Path, kind: str,
         await core.start()
         # The api id and hash, once, on this terminal (the window has no form for them).
         text: Any = None
+        if core.client is None and _in_background():
+            sys.stderr.write("tgd: the api id and hash are not set yet, and a job in the background "
+                             "cannot ask for them: type tgd --window (without &) once; then "
+                             "tgd --window & works\n")
+            return 8
         while core.client is None:
             if text is None:  # one reader of the terminal
                 text = TextFrontEnd()

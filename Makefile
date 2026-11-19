@@ -70,7 +70,7 @@ HOST_OPENSSL ?= $(shell brew --prefix openssl@3 2>/dev/null)
 logged = $(1) > $(LOGS)/$(2).log 2>&1 || { echo "$(2) failed: $(LOGS)/$(2).log"; tail -40 $(LOGS)/$(2).log; exit 1; }
 
 .PHONY: fetch td python root smoke clean wheels tgd host test-tgd-host test-tgd-vm test-tgd-window smoke-tgd smoke-tgd-net run-tgd \
-	overlay test-tg-host tg tg-image test-tg-window run-tg test-tg-socket run-tg-login tg-install test-tg-real-start
+	overlay test-tg-host tg tg-image test-tg-window run-tg test-tg-socket run-tg-login tg-install test-tg-real-start walk-tg-login
 .SUFFIXES:
 
 fetch: $(B)/src/$(TD_FILE)
@@ -396,11 +396,18 @@ run-tg: tg-image
 # (docs/tg-window-report.md has the lines). Not /bin/tgd: /bin is on shell.path, which comes
 # before the installed names (ADR-0396 item 6), so tgd would start without its grants.
 STAGEB := $(OUT)/stageb
+# The architect's kept volume (run-tg-login, tg-install: its api id, hash and login), and the
+# tests' own (test-tg-socket, test-tg-real-start make it again each run): never the same file.
 TGS_DISK := $(B)/tgs/disk.img
+TGT_DISK := $(B)/tgs-test/disk.img
 TGS_DISK_SIZE ?= 768M
 TGS_SCALES ?= 1 2
 TGS_TIMEOUT ?= 600
 TGS_MEM ?= 1024M
+# QEMU's cocoa display without zoom-to-fit: with it, the window tells the guest its own size,
+# which on this Mac mini's 1920x1080 screen became 640x480 at once, and Zoraya's desktop
+# followed (too small for tg's window, the dock and the terminals; R26).
+TGS_DISPLAY ?= cocoa,left-command-key=on
 $(STAGEB)/.stamp: $(OUT)/root/.stamp $(TG_ELF) packages/tg/tg.cmd packages/tgd/tgd.cmd
 	rm -rf $(STAGEB) && mkdir -p $(STAGEB)/packages/tg $(STAGEB)/packages/tgd
 	cp -R $(OUT)/root/. $(STAGEB)/ && rm -f $(STAGEB)/bin/tgd $(STAGEB)/.stamp
@@ -408,7 +415,7 @@ $(STAGEB)/.stamp: $(OUT)/root/.stamp $(TG_ELF) packages/tg/tg.cmd packages/tgd/t
 	cp $(B)/tgd.elf $(STAGEB)/packages/tgd/tgd && cp packages/tgd/tgd.cmd $(STAGEB)/packages/tgd/
 	@echo "stageb: the packages tg $$(du -k $(STAGEB)/packages/tg/tg | cut -f1) KiB, tgd $$(du -k $(STAGEB)/packages/tgd/tgd | cut -f1) KiB"
 	@touch $@
-tgs_disk = rm -f $(TGS_DISK) $(TGS_DISK).key && mkdir -p $(B)/tgs && cd $(ZTGW) && EXTRA_ROOT=$(STAGEB):$(TG)/tests/tg-window.root DISK_SIZE=$(TGS_DISK_SIZE) tools/run-disk.sh $(TGS_DISK)
+tgs_disk = rm -f $(1) $(1).key && mkdir -p $(dir $(1)) && cd $(ZTGW) && EXTRA_ROOT=$(STAGEB):$(TG)/tests/tg-window.root DISK_SIZE=$(TGS_DISK_SIZE) tools/run-disk.sh $(1)
 
 # The two programs installed on the stage B volume, on the console (tests/tg-install.script,
 # its long lines typed in pieces by tests/expand_script.py): install needs the volume's root,
@@ -418,7 +425,7 @@ $(TGS_INSTALL): tests/tg-install.script tests/expand_script.py tgd/tgd/net.py tg
 	@mkdir -p $(B)/tgs
 	python3 tests/expand_script.py tests/tg-install.script "$$(cd tgd && python3 -c 'from tgd import net; print(net.install_line())')" > $@
 tgs_install = cd $(ZTGW) && target/debug/zoraya-test-runner --timeout 600 --script $(TGS_INSTALL) --label tg-install -- \
-	  tools/run-qemu.sh --test --keys --mem $(TGS_MEM) --disk $(TGS_DISK) --accel hvf build/zoraya-kernel.elf; rc=$$?; \
+	  tools/run-qemu.sh --test --keys --mem $(TGS_MEM) --disk $(1) --accel hvf build/zoraya-kernel.elf; rc=$$?; \
 	  cp target/test-logs/tg-install.log $(LOGS)/tg-install.log 2>/dev/null; [ $$rc = 0 ]
 
 # The window over tgd's socket (tests/tg-socket.script), on a fresh volume for each scale:
@@ -429,11 +436,11 @@ tgs_install = cd $(ZTGW) && target/debug/zoraya-test-runner --timeout 600 --scri
 test-tg-socket: tg-image $(STAGEB)/.stamp $(TGS_INSTALL) tests/tg-socket.script tests/ppm2png.py
 	@for scale in $(TGS_SCALES); do \
 	  label=tg-socket-$$scale; \
-	  ( $(tgs_disk) ) && ( $(tgs_install) ) || exit 1; \
+	  ( $(call tgs_disk,$(TGT_DISK)) ) && ( $(call tgs_install,$(TGT_DISK)) ) || exit 1; \
 	  ( cd $(ZTGW) && target/debug/zoraya-test-runner --timeout $(TGS_TIMEOUT) --gui-script $(TG)/tests/tg-socket.script \
 	      --qmp build/$$label.qmp --label $$label -- \
 	      tools/run-qemu.sh --test --gui --gui-scale $$scale --mem $(TGS_MEM) --qmp build/$$label.qmp \
-	      --disk $(TGS_DISK) --accel hvf build/zoraya-kernel.elf ); rc=$$?; \
+	      --disk $(TGT_DISK) --accel hvf build/zoraya-kernel.elf ); rc=$$?; \
 	  cp $(ZTGW)/target/test-logs/$$label.log $(LOGS)/$$label.log 2>/dev/null; \
 	  [ $$rc = 0 ] || exit $$rc; \
 	  python3 tests/ppm2png.py $(ZTGW)/build/shots docs/shots $$label || exit 1; \
@@ -442,24 +449,40 @@ test-tg-socket: tg-image $(STAGEB)/.stamp $(TGS_INSTALL) tests/tg-socket.script 
 # The real tgd (TDLib) serving the window, with placeholder credentials and no network
 # (tests/tg-real-start.script): the start the architect's login goes through. Scale 1.
 test-tg-real-start: tg-image $(STAGEB)/.stamp $(TGS_INSTALL) tests/tg-real-start.script
-	( $(tgs_disk) ) && ( $(tgs_install) ) || exit 1
+	( $(call tgs_disk,$(TGT_DISK)) ) && ( $(call tgs_install,$(TGT_DISK)) ) || exit 1
 	( cd $(ZTGW) && target/debug/zoraya-test-runner --timeout $(TGS_TIMEOUT) --gui-script $(TG)/tests/tg-real-start.script \
 	    --qmp build/tg-real-1.qmp --label tg-real-1 -- \
 	    tools/run-qemu.sh --test --gui --gui-scale 1 --mem $(TGS_MEM) --qmp build/tg-real-1.qmp \
-	    --disk $(TGS_DISK) --accel hvf build/zoraya-kernel.elf ); rc=$$?; \
+	    --disk $(TGT_DISK) --accel hvf build/zoraya-kernel.elf ); rc=$$?; \
 	  cp $(ZTGW)/target/test-logs/tg-real-1.log $(LOGS)/tg-real-1.log 2>/dev/null; \
 	  [ $$rc = 0 ] && python3 tests/ppm2png.py $(ZTGW)/build/shots docs/shots tg-real-1
 
-# For the architect: a fresh stage B volume with both installed (FRESH is implied).
+# For the architect: a fresh stage B volume with both installed (refused while one is kept,
+# unless FRESH=1).
 tg-install: tg-image $(STAGEB)/.stamp $(TGS_INSTALL)
-	$(tgs_disk)
-	$(tgs_install)
+	@if [ -f $(TGS_DISK) ] && [ -z "$(FRESH)" ]; then echo "tg-install: $(TGS_DISK) is kept (the login is on it); FRESH=1 makes it again"; exit 1; fi
+	$(call tgs_disk,$(TGS_DISK))
+	$(call tgs_install,$(TGS_DISK))
 
 # The architect's run: Zoraya's desktop with the network and a kept volume (FRESH=1 makes
 # it again), the packages on it, for the real login by hand (docs/tg-window-report.md).
 run-tg-login: tg-image $(STAGEB)/.stamp $(TGS_INSTALL)
-	@if [ -n "$(FRESH)" ] || [ ! -f $(TGS_DISK) ]; then ( $(tgs_disk) ) && ( $(tgs_install) ) || exit 1; fi
-	cd $(ZTGW) && tools/run-qemu.sh --gui --gui-scale $(or $(SCALE),2) --net --mem $(TGS_MEM) --disk $(TGS_DISK) --accel hvf build/zoraya-kernel.elf
+	@if [ -n "$(FRESH)" ] || [ ! -f $(TGS_DISK) ]; then ( $(call tgs_disk,$(TGS_DISK)) ) && ( $(call tgs_install,$(TGS_DISK)) ) || exit 1; fi
+	cd $(ZTGW) && tools/run-qemu.sh --gui --gui-scale $(or $(SCALE),1) --display-opts $(TGS_DISPLAY) --net --mem $(TGS_MEM) --disk $(TGS_DISK) --accel hvf build/zoraya-kernel.elf
+
+# The architect's path, walked by the GUI runner in run-tg-login's own mode (interactive,
+# the same cocoa display) on a copy of the kept volume, with no network
+# (tests/tg-login-path.script): a cocoa window shows on the host while it runs.
+TGL_COPY := $(B)/tgl/disk.img
+walk-tg-login: tg-image tests/tg-login-path.script
+	@[ -f $(TGS_DISK) ] || { echo "walk-tg-login: no volume yet: make run-tg-login (or make tg-install)"; exit 1; }
+	@mkdir -p $(B)/tgl && cp $(TGS_DISK) $(TGL_COPY) && cp $(TGS_DISK).key $(TGL_COPY).key
+	( cd $(ZTGW) && target/debug/zoraya-test-runner --timeout 300 --gui-script $(TG)/tests/tg-login-path.script \
+	    --qmp build/tg-login-1.qmp --label tg-login-1 -- \
+	    tools/run-qemu.sh --gui --gui-scale 1 --display-opts $(TGS_DISPLAY) --mem $(TGS_MEM) --qmp build/tg-login-1.qmp \
+	    --disk $(TGL_COPY) --accel hvf build/zoraya-kernel.elf ); rc=$$?; \
+	  cp $(ZTGW)/target/test-logs/tg-login-1.log $(LOGS)/tg-login-1.log 2>/dev/null; rm -f $(TGL_COPY) $(TGL_COPY).key; \
+	  [ $$rc = 0 ] && python3 tests/ppm2png.py $(ZTGW)/build/shots docs/shots tg-login-1
 
 clean:
 	rm -rf $(B)/work $(B)/host $(B)/td-zoraya $(B)/python-* $(B)/rootfs-python $(B)/obj $(B)/smoke $(OUT)

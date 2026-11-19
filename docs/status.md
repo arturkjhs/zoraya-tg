@@ -30,3 +30,9 @@ Requests R23 and R24 are new; R22's second half is built in overlay 0003.
 
 **Waiting for the architect:** the real login (stage B's "done when": chats, history, sending, the AI summary, a
 restart keeping the login, `programs tgd`/`programs tg` listing exactly what each holds).
+
+2026-11-19, evening: the architect's hand run of `make run-tg-login` failed (the cocoa display shrank the desktop to
+640x480; a reopened first terminal had no channel to the panel). Reproduced in that mode, fixed (run-tg-login's
+display without zoom-to-fit and at scale 1; overlay 0004, R25, R26; tg's smaller first sizes), and the path walked
+by a scripted GUI run in run-tg-login's own mode on a copy of the kept volume (`make walk-tg-login`, twice). The tests
+no longer touch the kept volume. **Ready again for the architect's login.**

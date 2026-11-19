@@ -253,3 +253,28 @@ prefix more in the check). In `overlay/0003` (crates/zoraya-panel, with a test).
 
 **Minimal test:** `window_record(None, "demo", "Demo", "+sock /data/home/srv/s.sock")` is accepted; `+socket ...` is
 not.
+
+## R25: a new first terminal gets the channel to the panel
+
+**What.** When the first terminal of the desktop is closed (or its shell exits), `init` starts a new terminal and
+shell beside the running panel. The shell's channel to the panel for a POSIX program's window (ADR-0317, slot 14) is
+made only when the panel starts, so the new shell has none: every window program refuses with "it needs a window,
+and this session has no desktop to give one". The panel should take a new shell channel from `init` (a message on a
+channel it already reads), so that the new shell gets one without the panel starting again.
+
+**Until then.** `overlay/0004-a-new-first-terminal-gets-a-desktop.patch` (`init`): the panel and its chooser start
+again with the new terminal, as after a failed GUI, which closes the windows the dock had opened.
+**Minimal test:** close the first terminal; in the new one, a program with a window (`netsurf`, or an installed one
+with `window`) opens it.
+
+## R26: QEMU's cocoa display on a screen smaller than the guest's
+
+**What.** `tools/run-qemu.sh --gui` (interactive) uses `-display cocoa,...,zoom-to-fit=on`. On a 1920x1080 screen
+that is not Retina (a Mac mini with an ordinary monitor) the window reports 640x480 to the guest at once
+(`gpud: display 640x480`, at scale 1 and at scale 2 alike), and Zoraya's desktop follows: too small for most windows
+(an application asks for more and is refused), the dock and the terminals crowded. Without `zoom-to-fit` the guest
+keeps 1024x768. Either drop `zoom-to-fit` where the screen cannot show the guest at 1:1, or have the compositor keep a
+minimum size.
+
+**Until then.** zoraya-tg's `make run-tg-login` passes `--display-opts cocoa,left-command-key=on`.
+**Minimal test:** `make run-gui` on a 1920x1080 screen: the serial line says no `gpud: display 640x480`.

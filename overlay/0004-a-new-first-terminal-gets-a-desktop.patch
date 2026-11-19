@@ -1,0 +1,30 @@
+diff --git a/user/src/bin/init.rs b/user/src/bin/init.rs
+index ef520bc2..5c7093bd 100644
+--- a/user/src/bin/init.rs
++++ b/user/src/bin/init.rs
+@@ -1115,8 +1115,23 @@ fn main() -> i32 {
+                     println!("init: sync failed: what was written since the last sync may be lost");
+                 }
+             }
+-            // A new terminal and shell, as after `exit`; not a failure.
+-            Ended::Closed => println!("init: the terminal was closed"),
++            // A new terminal and shell, as after `exit`; not a failure. The panel
++            // (and its chooser) start again with them (local overlay): the shell's
++            // channel to the panel for a POSIX program's window (ADR-0317) is made
++            // only when the panel starts, so a new shell beside the old panel had
++            // none ("this session has no desktop to give one").
++            Ended::Closed => {
++                println!("init: the terminal was closed");
++                if let Some(c) = panel_reconnect.take() {
++                    let _ = handle_close(c);
++                }
++                if let Some(p) = panel.take() {
++                    p.end();
++                }
++                if let Some(c) = chooser.take() {
++                    c.end();
++                }
++            }
+             Ended::Gui => {
+                 println!("init: the gui failed");
+                 if let Some(c) = panel_reconnect.take() {

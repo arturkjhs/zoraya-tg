@@ -44,6 +44,7 @@
 | `0001-extra-programs-in-the-ramdisk.patch` | `Makefile`: `EXTRA_PROGRAMS` (ELF files added to the ramdisk), `EXTRA_APPS` exported to the build | R21: native programs from outside the repository in the image |
 | `0002-extra-applications-in-the-dock.patch` | `zoraya-panel`: `apps()` = the four of `APPS`, then the names of `ZORAYA_EXTRA_APPS`; the dock's text and a tile's press use it | R22: a dock tile and a launch record for a program that is not one of the four |
 | `0003-a-window-for-an-installed-native-program.patch` | `zoraya-describe`: a volume description may say `window TITLE`; `zosh`: an installed native program with it gets its window from the panel (ADR-0317's request, the line's grants as pills) at slot 5 and the console at slot 1, beside its start-up record with the saved words; `zoraya-panel`: a `+sock PATH` pill is taken (R24). 144 changed lines with their tests. | R22's second half; R24 |
+| `0004-a-new-first-terminal-gets-a-desktop.patch` | `init`: when the first terminal closes, the panel and its chooser start again with the new terminal, so its shell has the channel to the panel for windows. 17 changed lines. | R25 |
 | (no patch) | the heap and the platform copied into `tg/tg` | R20: the parts of a native window program as crates of their own |
 
 `make overlay` applies them once and refuses a clone that has a remote.
@@ -276,15 +277,45 @@ the phone form (`docs/shots/tgr-window.png`).
 installed before the view-models); `install` refused `tg` while the ramdisk had a program of that name (the dock's
 copy is `tg-sample`); a SIGINT inherited ignored by a job started with `&`, and a signal that never woke the loop.
 
+## The hand run that failed, and why (2026-11-19, evening)
+
+The architect's `make run-tg-login` did not work: the first terminal said "it needs a window, and this session has no
+desktop to give one", the dock's terminal tile seemed to do nothing, and a closed terminal came back at once. Every
+test before had booted with `--test` (no display), which none of this touches. Reproduced in run-tg-login's own mode
+(interactive, the cocoa display) through the GUI runner, on copies of the kept volume:
+
+1. **The display.** QEMU's cocoa display with `zoom-to-fit` tells the guest its window's size, and on this Mac mini's
+   1920x1080 screen that is 640x480 right after the boot (`gpud: display 640x480`), at scale 2 and at scale 1 alike.
+   Zoraya's desktop follows: tg's 840x520 window is refused (`tg: no window`), the dock and terminals are crowded, a
+   press lands elsewhere. Fixed: run-tg-login uses `cocoa,left-command-key=on` (no zoom-to-fit) and scale 1 (R26);
+   and tg now tries 600x420 and 440x320 when its first size is refused (the view has one pane below 620; on a new
+   volume: the kept volume's installed tg is the one installed with it).
+2. **The closed terminal.** `init` starts a new first terminal beside the running panel, and the shell's channel to
+   the panel for a window is made only when the panel starts, so the new shell has none: exactly the message the
+   architect saw (`make walk-tg-login`'s first steps reproduce it without the fix). Fixed in `overlay/0004` (R25).
+3. **The tile** does what it should: a press raises the terminal that is open (one window an application); on the
+   640x480 desktop that was hard to see.
+4. **And a danger found on the way:** `make test-tg-socket` and `make test-tg-real-start` used to make the same volume
+   as run-tg-login again, which would have deleted the kept volume and its login. The tests now have their own
+   (`build/tgs-test/`); `tg-install` refuses to replace a kept volume without `FRESH=1`. The kept volume was not
+   touched: it holds the api id and hash the architect typed, and the walks below ran on copies without network.
+
+**Walked by hand, scripted** (`make walk-tg-login`, `tests/tg-login-path.script`, passes twice): run-tg-login's own
+command (interactive, the same cocoa display, scale 1) on a copy of the kept volume, without network: the first
+terminal closed and opened again by init; in it `tgd --window --no-probe &` (the saved api id and hash: nothing
+asked) and `tg &`; the window shows the phone form (`docs/shots/tgl-phone.png`); the terminal tile brings the
+terminal forward (`tgl-term.png`). After the fixes `make test-tg-socket`, `make test-tg-window` and
+`make test-tg-real-start` pass again.
+
 ## The real login (the architect, by hand)
 
-1. On the Mac mini, in `~/workspace/zoraya-tg`: `make run-tg-login`. The first time it makes the volume
-   (`build/tgs/disk.img`), installs both on the console (an automatic boot, about a minute), then starts the desktop
-   with the Internet (SLIRP, no `--test`). Later runs keep the volume and the login; `FRESH=1` makes it again.
-2. In the desktop's terminal: `tgd --window`. It asks `api id:`, `api hash:` and the OpenRouter key for the AI
-   summary (Enter for none; neither is shown) and keeps them in its own directory. When it says `tgd: login: starting`, press Ctrl-C (`tgd: ended`).
-3. `tgd --window &` (it asks nothing now), then `tg &`. The window opens with the pill `+sock
-   /data/home/tgd/window.sock`.
+1. On the Mac mini, in `~/workspace/zoraya-tg`: `make run-tg-login`. It keeps the volume (`build/tgs/disk.img`, made
+   and installed on the first run; `FRESH=1` makes it again and loses the login) and starts the desktop at 1024x768
+   with the Internet. `SCALE=2` asks for 2048x1536, which this screen cannot show whole.
+2. The api id and hash are already on the kept volume (typed in the first hand run). On a new volume, type
+   `tgd --window` once without `&`: it asks for them and the OpenRouter key (Enter: none); then Ctrl-C.
+3. In the desktop's terminal: `tgd --window &`, then `tg &`. The window opens with the pill `+sock
+   /data/home/tgd/window.sock`. (Closing the first terminal is fine now: the new one can start tg too.)
 4. In the window: the phone number (with the country's code), Next; the code; the password if the account has one
    (drawn as dots). The list comes.
 5. To check: open a chat, send a message, the summary (Settings: turn on AI summaries of the chat, then Summary),

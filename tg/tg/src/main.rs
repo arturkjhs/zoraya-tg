@@ -163,8 +163,27 @@ fn main() -> i32 {
     let tree = view::build(&model, clock_monotonic);
     let mut roles = tree.roles;
     let mut built = model.borrow().tree;
-    let Some(window) = app.open(title, tree.root, WIDTH, HEIGHT) else {
-        say("tg: no window");
+    // The first size that the desktop takes: the compositor refuses a window larger than the
+    // display, which a host window can make small (QEMU's cocoa display follows its window,
+    // and Zoraya the display). Below 620 wide the view shows one pane at a time.
+    let mut root = Some(tree.root);
+    let mut window = None;
+    for (w, h) in [(WIDTH, HEIGHT), (600, 420), (440, 320)] {
+        let Some(r) = root.take() else { break };
+        // A refused open drops the tree it was given: a new one for the next size.
+        window = app.open(title, r, w, h);
+        if window.is_some() {
+            if (w, h) != (WIDTH, HEIGHT) {
+                say(&alloc::format!("tg: the desktop is small: the window is {w}x{h}"));
+            }
+            break;
+        }
+        let t = view::build(&model, clock_monotonic);
+        roles = t.roles;
+        root = Some(t.root);
+    }
+    let Some(window) = window else {
+        say("tg: no window: the desktop is smaller than 440x320");
         return 1;
     };
     let Ok(port) = port_create() else { return 1 };

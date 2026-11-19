@@ -14,6 +14,7 @@ exit     4  its own directory cannot be written
 exit     5  another tgd uses the same data
 exit     6  the window's socket could not be made
 exit     7  the window's socket stopped
+exit     8  the api id and hash are not set, and it runs in the background
 ---
 tgd keeps the login, the database and the AI's key in its own directory (~/.config/tgd, which
 is /data/ROOM/tgd), which no other program reads. With --window it makes the socket
