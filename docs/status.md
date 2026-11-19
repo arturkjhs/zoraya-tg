@@ -20,3 +20,19 @@ Zoraya's source for this task is the local clone `../zoraya-tgw` (no remote), at
 table in `docs/tg-window-report.md` ("Stage B step 1"). `make test-tgd-vm` (host Python against a fake TDLib) passes
 twice. It was host Python only while the TASK-31 dispatcher held the builds. Steps 2 and 3 (the socket, installing)
 wait for the dispatcher to pause; then `CARGO_BUILD_JOBS=4`, one QEMU at a time.
+
+**Stage B, what remains** (the architect, 2026-11-19; each step committed and pushed; nothing about Telegram in the
+public repository):
+2. `tgd` listens on a socket file in its own directory (ADR-0465); `tg`'s `SocketBackend` connects with a saved
+   `+sock` grant. With it, **protocol 3**: a `failed` state for a message whose send failed (tgclient's
+   `messageSendingStateFailed`), never shown as pending, and a retry action in the window.
+3. Both programs installed with `install` and saved grants: for `tgd` the nine IPv4 ranges on 443 and
+   `openrouter.ai:443`, for `tg` the `+sock`. `programs show` lists exactly what each holds.
+4. In the chat view, a position indicator and a jump to the first unread message.
+Then stop: the real-account login is the architect's, by hand.
+
+Step 1's choices were accepted: the per-chat AI switch as the one settings item, the summary as running then done,
+the empty subtitle until presence, the fake AI service in `tests/tgd_vm.py`, `python3.12` on this host (the Mac mini).
+**Steps 2 to 4 wait until the architect says the TASK-31 dispatcher has paused.** Then `CARGO_BUILD_JOBS=4`, one
+QEMU at a time; `~/workspace/zoraya-tgw` is updated from `~/workspace/zoraya-8` by commit, and the overlay patches
+that main now covers are dropped; the dispatcher's worktrees are not touched.
