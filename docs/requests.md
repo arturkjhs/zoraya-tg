@@ -199,6 +199,19 @@ tile, but `zosh` starts no window program).
 **Until then.** `overlay/0002-extra-applications-in-the-dock.patch` (a function beside the table, read from the
 build's environment); the program starts from the dock only, not from a terminal.
 
+**The second half, as built in the overlay (2026-11-19).** A window program that is *installed* (ADR-0396) gets its
+saved grants only when the shell starts it, and only the panel gives windows; so a window program that needs a saved
+grant (a socket file, ADR-0465) cannot have both. `overlay/0003-a-window-for-an-installed-native-program.patch`
+(`zoraya-describe`, `zosh`): a volume description may say `window TITLE` (the one key added to ADR-0396 item 5's
+set; `for_volume` keeps it); when the shell starts an installed native program whose description has it, it asks the
+panel for the window exactly as ADR-0317 asks for a POSIX program's (a trusted room, a desktop, every grant of the
+line as a pill, refused when the pills do not fit), and starts the program with the client end at slot 5 and the
+console at slot 1, as the panel's launch record of an application has them, beside its start-up record with the
+saved words. 132 changed lines, with the tests of the key set changed to match. **Minimal test:** an installed
+native program with `window Demo` and a saved `+sock` word, started by name from a terminal of the desktop, opens
+its window with the pill `+sock PATH` and reaches that socket; in an untrusted room the line is refused; without the
+key it starts as today, with no window.
+
 **Minimal test.** With `EXTRA_APPS=demo` and a `demo` program in the ramdisk: the dock shows a fifth tile with `D`,
 a press opens its window with the pill `+w /data/home/demo`, a second press raises it, and in a room it opens with
 the room's grants; without the variable the dock is as today.

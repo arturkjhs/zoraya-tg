@@ -36,7 +36,7 @@
 < \r\n~>
 # The protocol, without network (--no-probe): hello, a reply, an error reply, credentials
 # (placeholders) that start TDLib to wait_phone, a clean quit.
-> +w ~/tg tgd --json --no-probe --test-dc\r
+> +w ~/tg tgd --json --no-probe --test-dc --data ~/tg\r
 < "ev": "hello"
 < "state": "need_credentials"
 > {"op": "version", "id": 1}\r
@@ -53,7 +53,7 @@
 < succeeded (exit status 0)
 < \r\n~>
 # Started again: the credentials and the database are found, TDLib asks for the phone.
-> +w ~/tg tgd --json --no-probe --test-dc\r
+> +w ~/tg tgd --json --no-probe --test-dc --data ~/tg\r
 < "ev": "hello"
 < "state": "wait_phone"
 > {"op": "quit", "id": 1}\r

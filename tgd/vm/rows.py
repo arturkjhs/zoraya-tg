@@ -161,6 +161,6 @@ def message_row(model: messages.MessageListModel, row: int) -> dict[str, Any]:
                   if model.data(i, R.ReplyToId) and (reply_sender or reply_text) else None),
         "forward": forward or None,
         "edited": model.data(i, R.Edited),
-        # tgclient's "failed" has no state in protocol 2 yet: it stays pending.
-        "state": {"pending": "pending", "failed": "pending", "read": "read"}.get(status, "sent"),
+        # Protocol 3: a failed send is "failed", never "pending".
+        "state": {"pending": "pending", "failed": "failed", "read": "read"}.get(status, "sent"),
     }

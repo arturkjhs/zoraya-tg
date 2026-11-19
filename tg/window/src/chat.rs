@@ -95,7 +95,9 @@ pub struct Messages {
 
 fn foot_text(m: &MessageRow, offset: i32) -> String {
     let t = time::clock(m.date, offset);
-    if m.edited {
+    if m.out && m.state == SendState::Failed {
+        format!("Not sent, Enter to retry · {t}")
+    } else if m.edited {
         format!("edited {t}")
     } else {
         t
@@ -452,6 +454,13 @@ impl Messages {
             SendState::Pending => {
                 draw::ring(c, draw::rect(x + 4 * k, y + k, 9 * k, 9 * k), k as u32, fg)
             }
+            // A mark in the error colour: a bar and a dot in a ring.
+            SendState::Failed => {
+                let e = p.palette.error;
+                draw::ring(c, draw::rect(x + 2 * k, y, 11 * k, 11 * k), k as u32, e);
+                c.fill(draw::rect(x + 7 * k, y + 2 * k, k, 4 * k), e);
+                c.fill(draw::rect(x + 7 * k, y + 7 * k, k, k), e);
+            }
             SendState::Sent | SendState::Read => {
                 let s = 12 * k;
                 let mut tick = |dx: i32, fg| {
@@ -545,7 +554,12 @@ impl Messages {
         let foot = foot_text(m, offset);
         let fx = b.x + b.w - PAD_X * k - l.foot_w;
         let base = draw::baseline(b.y + l.foot, 15 * k, cpx);
-        let w = draw::text(c, &mut p.ui, &foot, cpx, fx, base, pal.fg_text_secondary, b);
+        let foot_fg = if m.out && m.state == SendState::Failed {
+            pal.error
+        } else {
+            pal.fg_text_secondary
+        };
+        let w = draw::text(c, &mut p.ui, &foot, cpx, fx, base, foot_fg, b);
         if m.out {
             Messages::ticks(c, p, m.state, fx + w + 4 * k, b.y + l.foot + k);
         }
@@ -661,7 +675,8 @@ impl Widget for Messages {
                     key::PAGE_DOWN => m.scroll = (m.scroll - page).max(0),
                     keys::HOME => m.scroll = self.max_scroll,
                     keys::END => m.scroll = 0,
-                    keys::ENTER | key::R => m.reply_to_cursor(),
+                    keys::ENTER => m.activate_cursor(),
+                    key::R => m.reply_to_cursor(),
                     keys::ESC => {
                         if !m.escape() {
                             return Response::None;
@@ -678,6 +693,11 @@ impl Widget for Messages {
                 // The hits are physical, the event logical.
                 let (px, py) = (draw::num(x) * self.k, draw::num(y) * self.k);
                 match self.hits.iter().find(|(_, r)| r.contains(px, py)) {
+                    // A press on a failed message that is already chosen sends it again.
+                    Some((i, _))
+                        if m.msg_cursor == Some(*i)
+                            && modifiers & mods::SHIFT == 0
+                            && m.retry_cursor() => {}
                     Some((i, _)) => m.msg_select(*i, modifiers & mods::SHIFT != 0),
                     None => {
                         m.msg_cursor = None;

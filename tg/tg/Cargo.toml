@@ -1,6 +1,6 @@
 [package]
 name = "tg"
-description = "The Telegram window: a native Zoraya program over zoraya-app, with a built-in sample backend (stage A)."
+description = "The Telegram window: a native Zoraya program over zoraya-app; tgd over a socket file it is granted (+sock), or the built-in sample backend."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -14,6 +14,8 @@ zoraya-heap = { path = "../../../zoraya-tgw/crates/zoraya-heap" }
 zoraya-app = { path = "../../../zoraya-tgw/crates/zoraya-app" }
 zoraya-tokens = { path = "../../../zoraya-tgw/crates/zoraya-tokens" }
 zoraya-ui = { path = "../../../zoraya-tgw/crates/zoraya-ui" }
+zoraya-proto-file = { path = "../../../zoraya-tgw/crates/zoraya-proto-file" }
+zoraya-protocol = { path = "../../../zoraya-tgw/crates/zoraya-protocol" }
 
 [lints]
 workspace = true

@@ -1,7 +1,10 @@
 //! The window's protocol (docs/tg-window.md, "The protocol"): what the window asks of its
 //! backend and what the backend tells it. `SampleBackend` speaks these types directly;
-//! stage B's `SocketBackend` writes each [`Request`] as a JSON line (`op`) and reads each
-//! [`Event`] from one (`ev`), with the same names and fields.
+//! `SocketBackend` (`socket.rs`) writes each [`Request`] as a JSON line (`op`) and reads each
+//! [`Event`] from one (`ev`), with the same names and fields (`wire.rs`).
+
+/// The protocol this window speaks: 3 adds the `failed` state and `messages.retry`.
+pub const PROTOCOL: u32 = 3;
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -87,6 +90,8 @@ pub enum SendState {
     Sent,
     /// Read by the other side.
     Read,
+    /// The send failed (protocol 3): never shown as pending; `messages.retry` sends it again.
+    Failed,
 }
 
 /// The message a reply answers, as one line.
@@ -187,6 +192,10 @@ pub enum Request {
         text: String,
         reply_to: Option<Id>,
     },
+    /// `messages.retry` (protocol 3): the failed message `id` is sent again. The backend
+    /// answers with the old row's `message.delete` and the new one's `message.new`, or
+    /// with `message.update` if it keeps the id.
+    MessagesRetry { chat: Id, id: Id },
     /// `ai.summarize`, answered by `Summary` events.
     Summarize { chat: Id, scope: Scope },
     /// `ai.cancel`.

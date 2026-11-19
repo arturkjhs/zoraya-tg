@@ -1,5 +1,6 @@
-"""Protocol 2 (docs/tg-window.md, "The protocol"): the window's requests in, events out,
-served by tgclient's view-models.
+"""Protocol 3 (docs/tg-window.md, "The protocol"): the window's requests in, events out,
+served by tgclient's view-models. Protocol 3 is 2 with a failed send's own state
+(`failed`, never `pending`) and `messages.retry`.
 
 What QML did with the models' notifications, this does for the window:
 
@@ -41,7 +42,7 @@ log = logging.getLogger("tgd.vm")
 
 Emit = Callable[[dict[str, Any]], None]
 
-PROTOCOL = 2
+PROTOCOL = 3
 MAX_WINDOW = 200  # rows of the chat list one window may ask for
 MAX_PAGE = 200  # messages of one reset or page
 AUTH_STATES = {"loading": "starting", "phone": "wait_phone", "code": "wait_code",
@@ -138,6 +139,19 @@ class WindowServer:
         self.chat_list.setList(MAIN)
         self._send_settings()
 
+    def restart(self) -> None:
+        """A new window connected: what the last one had open is closed, and it hears
+        everything from the start."""
+        self.window_gone()
+        self.start()
+
+    def window_gone(self) -> None:
+        """The window went: nothing is open for it any more."""
+        self._close_chat()
+        self._window = None
+        self._window_rows, self._window_total = [], 0
+        self._summary = None
+
     # --- requests --------------------------------------------------------------------------
 
     async def handle(self, request: dict[str, Any]) -> None:
@@ -162,6 +176,8 @@ class WindowServer:
         elif op == "messages.send":
             self._send(_id(request.get("chat"), "chat"), str(request.get("text") or ""),
                        request.get("reply_to"))
+        elif op == "messages.retry":
+            await self._retry(_id(request.get("chat"), "chat"), _id(request.get("id"), "id"))
         elif op == "ai.summarize":
             self._summarize(_id(request.get("chat"), "chat"), str(request.get("scope") or ""))
         elif op == "ai.cancel":
@@ -311,6 +327,20 @@ class WindowServer:
             raise RequestError("nothing to send")
         self.composer.sent()
         self.messages.send(text, _id(reply_to, "reply_to") if reply_to else 0)
+
+    async def _retry(self, chat_id: int, message_id: int) -> None:
+        """TDLib's resendMessages: the failed message is deleted and sent again as a new
+        one (message.delete, then message.new and its confirmation)."""
+        state = self._open
+        if state is None or state.chat_id != chat_id:
+            raise RequestError("that chat is not open")
+        if (state.sent.get(message_id) or {}).get("state") != "failed":
+            raise RequestError("that message did not fail")
+        try:
+            await self._client.send({"@type": "resendMessages", "chat_id": chat_id,
+                                     "message_ids": [message_id], "quote": None})
+        except Exception as e:  # noqa: BLE001 - TdError: Telegram says when it can be retried
+            raise RequestError(f"it cannot be sent again now ({getattr(e, 'code', '?')})") from None
 
     def _on_send_result(self, event: dict[str, Any]) -> None:
         self._renamed[int(event["message"]["id"])] = int(event["old_message_id"])

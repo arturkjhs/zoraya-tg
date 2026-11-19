@@ -176,7 +176,8 @@ class PromptAuthUI:
 
 class Core:
     def __init__(self, *, data_dir: Path, test_dc: bool, binding: str, tdjson_path: str | None,
-                 api_file: Path | None, emit: Emit, td_log_level: int = 1) -> None:
+                 api_file: Path | None, emit: Emit, td_log_level: int = 1,
+                 auth_ui: Any = None) -> None:
         self.data_dir = data_dir
         self.test_dc = test_dc
         self.binding = binding
@@ -196,7 +197,9 @@ class Core:
         self._auth_task: asyncio.Task[None] | None = None
         self._auth_cond = asyncio.Condition()
         self._auth_version = 0
-        self._ui = PromptAuthUI(self)
+        # AuthFlow's UI: the prompts of the text and JSON front ends, or the window's
+        # AuthController (tgd/vm/auth.py), which the window answers through protocol 3.
+        self._ui = auth_ui if auth_ui is not None else PromptAuthUI(self)
         self._history: Any = None
         self._rekey: bytes | None = None
         self.ai: Any = None
@@ -297,6 +300,8 @@ class Core:
             await self._flow.run()
         except AuthError as e:
             self._auth_changed("failed", {"message": str(e)})
+            if hasattr(self._ui, "set_failed"):  # the window's AuthController
+                self._ui.set_failed(str(e))
             return
         if self._rekey is not None:
             new, self._rekey = self._rekey, None
@@ -313,6 +318,8 @@ class Core:
         except TdError:
             self.me = {}
         self._auth_changed("ready", {"me": self.me})
+        if hasattr(self._ui, "set_ready"):  # the window's AuthController, as tgclient's app
+            self._ui.set_ready()
         log.info("authorized")
 
     def _on_td_state(self, event: dict[str, Any]) -> None:
@@ -323,6 +330,9 @@ class Core:
         # The wait_* states are announced by the prompts (with what they need); the others here.
         if not short.startswith("wait_") and short != "ready":
             self._auth_changed(short, {})
+        # Logged out (or TDLib closed): the window says so and shows no account any more.
+        if short in ("logging_out", "closed") and hasattr(self._ui, "set_failed"):
+            self._ui.set_failed("Logged out. Start tgd again to log in.")
 
     def _auth_changed(self, state: str, info: dict[str, Any]) -> None:
         self.auth_state = state

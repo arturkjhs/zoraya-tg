@@ -10,6 +10,8 @@ dependencies = [
  "zoraya-abi",
  "zoraya-app",
  "zoraya-heap",
+ "zoraya-proto-file",
+ "zoraya-protocol",
  "zoraya-rt",
  "zoraya-tokens",
  "zoraya-ui",
@@ -60,6 +62,13 @@ dependencies = [
 [[package]]
 name = "zoraya-platform"
 version = "0.1.0"
+
+[[package]]
+name = "zoraya-proto-file"
+version = "0.1.0"
+dependencies = [
+ "zoraya-protocol",
+]
 
 [[package]]
 name = "zoraya-proto-gui"

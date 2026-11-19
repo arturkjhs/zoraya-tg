@@ -1,5 +1,6 @@
 """tgd's entry point: options, the network probe, the data directory and its lock, logging,
-then the core and one front end on one asyncio loop."""
+then the core and one front end on one asyncio loop: the text one, the JSON lines on
+stdin/stdout (--json), or the window's socket (--window, protocol 3)."""
 
 from __future__ import annotations
 
@@ -12,6 +13,7 @@ import logging.handlers
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 from . import VERSION, net
 
@@ -20,7 +22,9 @@ ON_ZORAYA = sys.platform == "zoraya"
 
 def default_data_dir() -> Path:
     if ON_ZORAYA:
-        return Path(os.path.expanduser("~")) / "tg"  # granted with +w ~/tg on the line
+        # Its own directory (ADR-0341, the saved +own ~/.config/tgd of its install): no
+        # other program reads it, and the window's socket can be made only there.
+        return Path(os.path.expanduser("~")) / ".config" / "tgd"
     return Path.home() / ".local" / "share" / "tgd"
 
 
@@ -35,6 +39,12 @@ def parse(argv: list[str]) -> argparse.Namespace:
                                 "stores, the services; JSON lines or a text front end.")
     p.add_argument("--test-dc", action="store_true", help="Telegram's test data centres")
     p.add_argument("--json", action="store_true", help="the line protocol on stdin/stdout")
+    p.add_argument("--window", action="store_true",
+                   help="serve the window tg on a socket file in the data directory")
+    p.add_argument("--socket", type=Path,
+                   help="the window's socket (default: window.sock in the data directory)")
+    p.add_argument("--synthetic", action="store_true",
+                   help="with --window: an invented account, no TDLib and no network (tests)")
     p.add_argument("--data", type=Path, help=f"data directory (default {default_data_dir()})")
     p.add_argument("--binding", choices=("builtin", "ctypes"),
                    help="TDLib binding (default: builtin _tdjson where present, else ctypes)")
@@ -44,7 +54,9 @@ def parse(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--no-probe", action="store_true", help="skip the network probe")
     p.add_argument("--td-log", type=int, default=1, help="TDLib's log verbosity (1)")
     p.add_argument("--grant", action="store_true",
-                   help="print the line that starts tgd on Zoraya, and end")
+                   help="print the line that starts tgd on Zoraya for one run, and end")
+    p.add_argument("--install-line", action="store_true",
+                   help="print the line that installs tgd on Zoraya with its grants, and end")
     p.add_argument("--version", action="version", version=f"tgd {VERSION}")
     return p.parse_args(argv)
 
@@ -117,22 +129,26 @@ def main(argv: list[str] | None = None) -> int:
     args = parse(sys.argv[1:] if argv is None else argv)
     data_dir = (args.data or default_data_dir()).expanduser()
     if args.grant:
-        shown = "~/tg" if args.data is None else str(data_dir)
+        shown = "~/tg" if args.data is None else str(args.data)
         print(net.grant_line(shown, args.test_dc))
+        return 0
+    if args.install_line:
+        print(net.install_line())
         return 0
 
     from . import binding  # noqa: PLC0415
 
-    kind = binding.choose(args.binding)
+    kind = "none" if args.synthetic else binding.choose(args.binding)
 
-    if not args.no_probe:
+    if not args.no_probe and not args.synthetic:
         try:
             reason = net.probe(args.test_dc)
         except net.Refused as e:
-            line = net.grant_line("~/tg" if args.data is None else str(data_dir), args.test_dc)
+            line = net.grant_line("~/tg" if args.data is None else str(args.data), args.test_dc)
             say(args, {"ev": "refused", "reason": "network", "detail": str(e), "grant": line},
                 f"tgd: no network for Telegram: {e}.\n"
-                f"On Zoraya, start it with the grants on the line:\n  {line}")
+                f"On Zoraya, install it with its grants:\n  {net.install_line()}\n"
+                f"or start it for one run with them on the line:\n  {line}")
             return 3
         if reason != "ok":
             say(args, {"ev": "warning", "reason": "network", "detail": reason},
@@ -144,7 +160,8 @@ def main(argv: list[str] | None = None) -> int:
         probe_file.write_text("", encoding="ascii")
         probe_file.unlink()
     except OSError as e:
-        hint = f" (on Zoraya: +w {data_dir} on the line)" if ON_ZORAYA else ""
+        hint = (f" (on Zoraya: installed with +own ~/.config/tgd, or +w {data_dir} on the line)"
+                if ON_ZORAYA else "")
         say(args, {"ev": "refused", "reason": "data", "detail": f"{data_dir}: {e.strerror}"},
             f"tgd: cannot write the data directory {data_dir}: {e.strerror}{hint}")
         return 4
@@ -174,6 +191,9 @@ async def _run(args: argparse.Namespace, data_dir: Path, kind: str,
     from .core import Core  # noqa: PLC0415
     from .frontends import JsonFrontEnd, LineReader, TextFrontEnd  # noqa: PLC0415
 
+    if args.window:
+        return await _run_window(args, data_dir, kind, api_file)
+
     front = JsonFrontEnd() if args.json else TextFrontEnd()
     core = Core(data_dir=data_dir, test_dc=args.test_dc, binding=kind,
                 tdjson_path=args.tdjson or os.environ.get("TDJSON_PATH"),
@@ -186,3 +206,106 @@ async def _run(args: argparse.Namespace, data_dir: Path, kind: str,
         await core.close()
     front.emit({"ev": "bye", "td": core.td_state or "-"})
     return 0
+
+
+def _window_say(event: dict) -> None:
+    """What the core says (protocol 1's events), on the terminal tgd --window runs in:
+    the version and the login's state, never a name or a value."""
+    kind = event.get("ev")
+    if kind == "hello":
+        sys.stderr.write(f"tgd {event.get('tgd')}, TDLib {event.get('tdlib')}, "
+                         f"data in {event.get('data')}\n")
+    elif kind == "auth.state":
+        state = event.get("state")
+        sys.stderr.write("tgd: logged in\n" if state == "ready" else f"tgd: login: {state}\n")
+    elif kind == "auth.error":
+        sys.stderr.write(f"tgd: Telegram refused it: {event.get('message', '')}\n")
+    sys.stderr.flush()
+
+
+async def _run_window(args: argparse.Namespace, data_dir: Path, kind: str,
+                      api_file: Path | None) -> int:
+    from vm.auth import AuthController  # noqa: PLC0415
+    from vm.server import WindowServer  # noqa: PLC0415
+
+    from .core import Core, CoreError  # noqa: PLC0415
+    from .frontends import LineReader, TextFrontEnd  # noqa: PLC0415
+    from .window import SOCKET_NAME, WindowFrontEnd  # noqa: PLC0415
+
+    log = logging.getLogger("tgd")
+    auth = AuthController()
+    front = WindowFrontEnd((args.socket or data_dir / SOCKET_NAME).expanduser())
+    if args.synthetic:
+        return await _run_synthetic(front, auth, log)
+    core = Core(data_dir=data_dir, test_dc=args.test_dc, binding=kind,
+                tdjson_path=args.tdjson or os.environ.get("TDJSON_PATH"),
+                api_file=api_file, emit=_window_say, td_log_level=args.td_log, auth_ui=auth)
+    try:
+        await core.start()
+        # The api id and hash, once, on this terminal (the window has no form for them).
+        while core.client is None:
+            text = TextFrontEnd()
+            text.reader = LineReader(asyncio.get_running_loop())
+            sys.stderr.write("api id and hash from my.telegram.org (kept in the data directory)\n")
+            api_id = await text._ask("api id: ")
+            api_hash = await text._ask("api hash: ", secret=True) if api_id is not None else None
+            if api_id is None or api_hash is None:
+                return 0
+            try:
+                core.set_credentials(api_id, api_hash)
+            except CoreError as e:
+                sys.stderr.write(f"tgd: {e}\n")
+        server = WindowServer(client=core.client, chats=core.chats, users=core.users,
+                              emit=front.emit, auth=auth, ai_service=core.ai)
+        front.server = server
+        try:
+            front.listen()
+        except OSError as e:
+            sys.stderr.write(f"tgd: cannot make the window's socket {front.path}: "
+                             f"{e.strerror or e}\n")
+            return 6
+        server.start()
+        log.info("window socket %s", front.path)
+        sys.stderr.write(f"tgd: the window's socket is {front.path}; start tg (Ctrl-C ends tgd)\n")
+        sys.stderr.flush()
+        await front.run()
+        return 7
+    finally:
+        front.close()
+        await core.close()
+
+
+async def _run_synthetic(front: Any, auth: Any, log: logging.Logger) -> int:
+    """tgd --window --synthetic: the invented account of synthetic.py through the same
+    view-models and socket, for the window's tests and a look before a login."""
+    import time  # noqa: PLC0415
+
+    from vm.server import WindowServer  # noqa: PLC0415
+
+    from .synthetic import NOW, Account, login  # noqa: PLC0415
+
+    account = Account()
+    started = time.monotonic()
+    server = WindowServer(client=account.client, chats=account.chats, users=account.users,
+                          emit=front.emit, auth=auth, ai_service=account.ai, synthetic=True,
+                          clock=lambda: NOW + (time.monotonic() - started))
+    front.server = server
+    try:
+        front.listen()
+    except OSError as e:
+        sys.stderr.write(f"tgd: cannot make the window's socket {front.path}: "
+                         f"{e.strerror or e}\n")
+        return 6
+    server.start()
+    tasks = [asyncio.ensure_future(login(auth)), asyncio.ensure_future(account.timer())]
+    log.info("window socket %s (synthetic)", front.path)
+    sys.stderr.write(f"tgd: the window's socket is {front.path}; an invented account "
+                     "(code 12345, password zoraya); start tg (Ctrl-C ends tgd)\n")
+    sys.stderr.flush()
+    try:
+        await front.run()
+        return 7
+    finally:
+        for t in tasks:
+            t.cancel()
+        front.close()

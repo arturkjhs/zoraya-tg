@@ -1,11 +1,14 @@
 //! `tg`: the Telegram window (docs/tg-window.md). A native Zoraya program over
-//! `zoraya-app`: it holds the compositor's channel and nothing else of the system: no
-//! network, no file. What it shows comes from a `Backend`: in stage A the sample one
-//! built into it (an invented account), in stage B `tgd` over a Unix socket.
+//! `zoraya-app`: it holds the compositor's channel and one socket file of `tgd`, and
+//! nothing else of the system: no network, no file. What it shows comes from a `Backend`:
 //!
-//! Launched by the panel as any application: slot 1 the console, 5 its compositor
-//! channel (6 a chooser channel and 7 a data directory, which it does not use).
-//! With synthetic data it says on the console what it shows, for the GUI test.
+//! - started by the shell as an installed program (a start-up record at slot 1000, its
+//!   window from the panel at slot 5): `tgd` over the socket its saved `+sock` grant
+//!   names (`link.rs`; the path is its argument, by default `/data/home/tgd/window.sock`);
+//! - started by the panel from the dock (slot 5, no start-up record, so no grant): the
+//!   sample backend built into it, an invented account, with "(sample)" in its title.
+//!
+//! With synthetic data it says on its output what it shows, for the GUI tests.
 
 #![no_std]
 #![no_main]
@@ -13,6 +16,7 @@
 extern crate alloc;
 
 mod heap;
+mod link;
 mod platform;
 
 use alloc::rc::Rc;
@@ -21,19 +25,74 @@ use alloc::vec::Vec;
 use core::cell::RefCell;
 
 use tg_window::model::{Model, Role, Stats};
-use tg_window::proto::Backend;
+use tg_window::proto::{Backend, Event, Request};
 use tg_window::sample::SampleBackend;
+use tg_window::socket::SocketBackend;
 use tg_window::view::{self, HEIGHT, WIDTH};
 use zoraya_abi::{DEADLINE_INFINITE, Handle, Mode, Packet, channel_signals};
 use zoraya_app::{App, Happened};
-use zoraya_rt::{clock_monotonic, handle_type, port_create, port_subscribe, port_wait, println};
+use zoraya_rt::{
+    clock_monotonic, console_write, handle_type, port_create, port_subscribe, port_unsubscribe,
+    port_wait, println, startup,
+};
 use zoraya_tokens::Appearance;
 
 use platform::Gui;
 
 const KEY_GUI: u64 = 1;
+const KEY_TGD: u64 = 2;
+
+/// Where the window's data comes from.
+enum Source {
+    Sample(SampleBackend),
+    Tgd(SocketBackend<link::Socket>),
+}
+
+impl Source {
+    fn end(&mut self) -> Option<Handle> {
+        match self {
+            Source::Sample(_) => None,
+            Source::Tgd(b) => b.transport().end(),
+        }
+    }
+}
+
+impl Backend for Source {
+    fn send(&mut self, r: Request) {
+        match self {
+            Source::Sample(b) => b.send(r),
+            Source::Tgd(b) => b.send(r),
+        }
+    }
+    fn poll(&mut self, now_ms: u64) -> Option<Event> {
+        match self {
+            Source::Sample(b) => b.poll(now_ms),
+            Source::Tgd(b) => b.poll(now_ms),
+        }
+    }
+    fn next_wake(&self) -> Option<u64> {
+        match self {
+            Source::Sample(b) => b.next_wake(),
+            Source::Tgd(b) => b.next_wake(),
+        }
+    }
+}
 /// The paint times are said on the console every this many frames.
 const FRAMES_A_REPORT: u32 = 50;
+
+/// A line of what the window shows (synthetic data only) or of a failure: on the console
+/// when it holds one (from the dock, and from the shell as an installed window program),
+/// where the GUI tests read it; else on its output (a terminal).
+fn say(line: &str) {
+    let console = Handle::new(1).filter(|h| handle_type(*h) == Ok("console"));
+    match console {
+        Some(c) => {
+            let _ = console_write(c, line.as_bytes());
+            let _ = console_write(c, b"\n");
+        }
+        None => println!("{line}"),
+    }
+}
 
 /// Requests to the backend and its events to the model, until both are quiet.
 /// Whether the model changed.
@@ -83,21 +142,29 @@ fn pasted(text: &str, lines: bool) -> String {
 #[unsafe(no_mangle)]
 fn main() -> i32 {
     let Some(compositor) = Handle::new(5).filter(|h| handle_type(*h) == Ok("channel")) else {
-        println!("tg: no compositor");
+        say("tg: no compositor");
         return 1;
     };
     let Some(mut app) = App::connect(Gui::new(compositor), Appearance::Light) else {
-        println!("tg: no compositor");
+        say("tg: no compositor");
         return 1;
     };
     let model = Rc::new(RefCell::new(Model::new()));
-    let mut backend = SampleBackend::new();
+    let (mut backend, title) = match link::startup_entries() {
+        Some(entries) => {
+            let arg = startup().argv.next().and_then(|a| core::str::from_utf8(a).ok());
+            let path = arg.unwrap_or(link::DEFAULT_SOCKET);
+            let socket = link::Socket::new(path, entries);
+            (Source::Tgd(SocketBackend::new(socket)), "Telegram")
+        }
+        None => (Source::Sample(SampleBackend::new()), "Telegram (sample)"),
+    };
     pump(&mut backend, &model);
     let tree = view::build(&model, clock_monotonic);
     let mut roles = tree.roles;
     let mut built = model.borrow().tree;
-    let Some(window) = app.open("Telegram", tree.root, WIDTH, HEIGHT) else {
-        println!("tg: no window");
+    let Some(window) = app.open(title, tree.root, WIDTH, HEIGHT) else {
+        say("tg: no window");
         return 1;
     };
     let Ok(port) = port_create() else { return 1 };
@@ -106,6 +173,8 @@ fn main() -> i32 {
         return 1;
     }
     let mut packets = [Packet::default(); 4];
+    // The socket's end the port watches (it changes when tgd goes and comes back).
+    let mut watched: Option<Handle> = None;
     loop {
         let mut dirty = false;
         while let Some(h) = app.poll() {
@@ -120,7 +189,7 @@ fn main() -> i32 {
                 Happened::Copy { .. } => {
                     let text = model.borrow().selected_text();
                     if !text.is_empty() && app.offer(&text) && model.borrow().synthetic {
-                        println!("tg: copied {} characters", text.chars().count());
+                        say(&alloc::format!("tg: copied {} characters", text.chars().count()));
                     }
                 }
                 Happened::Pasted(_) => {
@@ -193,25 +262,25 @@ fn main() -> i32 {
             (m.take_trace(), m.stats, m.synthetic)
         };
         for line in lines {
-            println!("{line}");
+            say(&line);
         }
         if synthetic && let Some(us) = stats.first_us {
             let m = &mut *model.borrow_mut();
-            println!(
+            say(&alloc::format!(
                 "tg: first frame of a new tree: {us} us, {} messages loaded, {} laid out, {} held",
                 m.messages.len(),
                 m.stats.laid,
                 m.stats.held
-            );
+            ));
             m.stats.first_us = None;
         }
         if synthetic && stats.frames >= FRAMES_A_REPORT {
-            println!(
+            say(&alloc::format!(
                 "tg: paint {} frames: mean {} us, longest {} us",
                 stats.frames,
                 stats.total_us / u64::from(stats.frames),
                 stats.max_us
-            );
+            ));
             let m = &mut *model.borrow_mut();
             m.stats = Stats {
                 mark: m.stats.mark,
@@ -220,6 +289,17 @@ fn main() -> i32 {
                 held: m.stats.held,
                 ..Stats::default()
             };
+        }
+        let end = backend.end();
+        if end != watched {
+            if watched.is_some() {
+                let _ = port_unsubscribe(port, KEY_TGD);
+            }
+            if let Some(e) = end {
+                let signals = channel_signals::READABLE | channel_signals::PEER_CLOSED;
+                let _ = port_subscribe(port, e, signals, KEY_TGD, Mode::Level);
+            }
+            watched = end;
         }
         let deadline = backend
             .next_wake()

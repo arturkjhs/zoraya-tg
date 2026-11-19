@@ -2,3 +2,4 @@
 /out/
 /.env
 /target/
+__pycache__/

@@ -30,6 +30,9 @@ pub const INCOMING_EVERY_MS: u64 = 6000;
 /// this long.
 pub const DELIVER_MS: u64 = 400;
 pub const READ_MS: u64 = 1800;
+/// A text sent with this at its start fails to send the first time (protocol 3's
+/// `failed`), and is delivered when sent again: invented, for the tests.
+pub const FAIL_PREFIX: &str = "/fail";
 /// A summary comes in parts this far apart.
 pub const SUMMARY_PART_MS: u64 = 300;
 
@@ -54,6 +57,8 @@ enum Timed {
 }
 
 pub struct SampleBackend {
+    /// The temporary ids of messages sent again (`messages.retry`): they do not fail.
+    retried: Vec<Id>,
     started: bool,
     now_ms: u64,
     auth: AuthState,
@@ -514,6 +519,7 @@ impl SampleBackend {
             on,
         };
         SampleBackend {
+            retried: Vec::new(),
             started: false,
             now_ms: 0,
             auth: AuthState::Starting,
@@ -678,12 +684,25 @@ impl SampleBackend {
             Timed::Incoming => self.incoming(),
             Timed::Delivered { chat, temp } => {
                 let open = self.open;
+                let retried = self.retried.contains(&temp);
                 let Some(c) = self.chat(chat) else { return };
                 let id = c.next;
                 let kind = c.row.kind;
                 let Some(m) = c.messages.iter_mut().find(|m| m.id == temp) else {
                     return;
                 };
+                if m.text.text.starts_with(FAIL_PREFIX) && !retried {
+                    m.state = SendState::Failed;
+                    let row = m.clone();
+                    if open == Some(chat) {
+                        self.queue.push_back(Event::MessageUpdate {
+                            chat,
+                            old_id: temp,
+                            row,
+                        });
+                    }
+                    return;
+                }
                 c.next += 1;
                 m.id = id;
                 // Notes to oneself are read at once; a group's or a channel's show one tick.
@@ -783,6 +802,29 @@ impl SampleBackend {
         };
         self.summary = Some((chat, parts));
         self.at(SUMMARY_PART_MS, Timed::SummaryPart(0));
+    }
+
+    /// As TDLib's resendMessages: the failed message goes and a new one is sent.
+    fn retry(&mut self, chat: Id, id: Id) {
+        let open = self.open;
+        let Some(c) = self.chat(chat) else { return };
+        let Some(i) = c
+            .messages
+            .iter()
+            .position(|m| m.id == id && m.out && m.state == SendState::Failed)
+        else {
+            return;
+        };
+        let old = c.messages.remove(i);
+        if open == Some(chat) {
+            self.queue.push_back(Event::MessageDelete {
+                chat,
+                ids: alloc::vec![id],
+            });
+        }
+        self.retried.push(self.next_temp);
+        // (The sample keeps no reply across a retry.)
+        self.send_message(chat, old.text.text, None);
     }
 
     fn send_message(&mut self, chat: Id, text: String, reply_to: Option<Id>) {
@@ -910,6 +952,7 @@ impl Backend for SampleBackend {
                 text,
                 reply_to,
             } => self.send_message(chat, text, reply_to),
+            Request::MessagesRetry { chat, id } => self.retry(chat, id),
             Request::Summarize { chat, scope } => self.summarize(chat, scope),
             Request::SummaryCancel => self.summary = None,
             Request::SettingsSet { key, on } => {

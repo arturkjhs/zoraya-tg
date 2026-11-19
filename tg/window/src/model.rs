@@ -439,7 +439,12 @@ impl Model {
                 if self.messages[i].row.state == SendState::Pending
                     && row.state != SendState::Pending
                 {
-                    self.say(format!("tg: delivered: {}", one_line(&row.text.text)));
+                    let what = if row.state == SendState::Failed {
+                        "not sent"
+                    } else {
+                        "delivered"
+                    };
+                    self.say(format!("tg: {what}: {}", one_line(&row.text.text)));
                 }
                 if self.reply_to == Some(old_id) {
                     self.reply_to = Some(row.id);
@@ -501,8 +506,11 @@ impl Model {
             AuthState::Ready => Screen::Main,
             _ => Screen::Login,
         };
-        if !error.is_empty() {
+        if !error.is_empty() && state != AuthState::Starting {
             self.say(format!("tg: login refused: {error}"));
+        }
+        if state == AuthState::Starting && !hint.is_empty() && hint != self.auth_hint {
+            self.say(format!("tg: waiting: {hint}"));
         }
         if state != self.auth || screen != self.screen {
             self.tree += 1;
@@ -841,6 +849,29 @@ impl Model {
             }
         }
         out
+    }
+
+    /// Enter on the keyboard's message: a failed one of ours is sent again (protocol 3),
+    /// any other is answered.
+    pub fn activate_cursor(&mut self) {
+        if !self.retry_cursor() {
+            self.reply_to_cursor();
+        }
+    }
+
+    /// Sends the keyboard's message again if it is ours and its send failed.
+    pub fn retry_cursor(&mut self) -> bool {
+        let (Some(chat), Some(m)) = (self.open, self.msg_cursor.and_then(|c| self.messages.get(c)))
+        else {
+            return false;
+        };
+        if !m.row.out || m.row.state != SendState::Failed {
+            return false;
+        }
+        let id = m.row.id;
+        self.say(format!("tg: retry: {}", one_line(&m.row.text.text)));
+        self.out.push(Request::MessagesRetry { chat, id });
+        true
     }
 
     /// Answers the keyboard's message: the composer names it.

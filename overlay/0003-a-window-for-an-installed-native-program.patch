@@ -1,0 +1,285 @@
+diff --git a/crates/zoraya-describe/src/lib.rs b/crates/zoraya-describe/src/lib.rs
+index 49e91e8b..57d33754 100644
+--- a/crates/zoraya-describe/src/lib.rs
++++ b/crates/zoraya-describe/src/lib.rs
+@@ -1530,10 +1530,13 @@ fn finish(sections: &mut Vec<Section>, mut s: Section, line: usize) -> Result<()
+ 
+ /// The keys a description read from the volume may have (ADR-0396 item 5):
+ /// help, completion and usage, and no authority. Every other key (`names`,
+-/// `cwd`, `program`, `reach`, `data`, `window`, `net`, `needs`, `setting`,
+-/// `when`, `topic`) is refused at install.
+-pub const VOLUME_KEYS: [&str; 7] = [
+-    "name", "summary", "usage", "operand", "option", "exit", "question",
++/// `cwd`, `program`, `reach`, `data`, `net`, `needs`, `setting`, `when`,
++/// `topic`) is refused at install. `window TITLE` is taken for a native
++/// program (local overlay: a window for an installed native program, whose
++/// pills are the line's grants, ADR-0317's request): it asks for a window,
++/// which the panel draws with every grant the program holds.
++pub const VOLUME_KEYS: [&str; 8] = [
++    "name", "summary", "usage", "operand", "option", "exit", "question", "window",
+ ];
+ 
+ /// The first header line of `bytes` whose key is outside [`VOLUME_KEYS`]:
+@@ -1582,7 +1585,8 @@ pub fn for_volume(mut d: Description) -> Description {
+     d.net_web = false;
+     d.reach = None;
+     d.data = None;
+-    d.window = None;
++    // Kept: the window's title (VOLUME_KEYS); the shell honours it for a native
++    // program only, through the panel, with the line's grants as its pills.
+     d.settings.clear();
+     d
+ }
+diff --git a/crates/zoraya-describe/src/tests.rs b/crates/zoraya-describe/src/tests.rs
+index 6bcf2b3b..9f1f6cba 100644
+--- a/crates/zoraya-describe/src/tests.rs
++++ b/crates/zoraya-describe/src/tests.rs
+@@ -954,7 +954,6 @@ fn a_volume_description_has_only_the_help_keys() {
+         "when a B read",
+         "net web",
+         "reach h tcp 22",
+-        "window T",
+         "names a b",
+         "topic ed",
+     ] {
+@@ -968,6 +967,10 @@ fn a_volume_description_has_only_the_help_keys() {
+     }
+     // Not UTF-8: the parser says so; the key check has nothing to add.
+     assert_eq!(volume_key_problem(b"\xff"), None);
++    // A window's title is taken (local overlay), and for_volume keeps it.
++    let w = "name ed\nsummary s\nusage ed\nwindow Ed\n";
++    assert_eq!(volume_key_problem(w.as_bytes()), None);
++    assert_eq!(for_volume(parse(w.as_bytes()).unwrap()).window.as_deref(), Some("Ed"));
+ }
+ 
+ #[test]
+diff --git a/crates/zoraya-settings/src/tests_apps.rs b/crates/zoraya-settings/src/tests_apps.rs
+index 2c6e1f6c..c67132e3 100644
+--- a/crates/zoraya-settings/src/tests_apps.rs
++++ b/crates/zoraya-settings/src/tests_apps.rs
+@@ -482,13 +482,14 @@ fn one_case_per_refusal_of_install() {
+         "when  a B read",
+         "net  web",
+         "reach  HOST tcp 22",
+-        "window  Title",
+         "names  a b",
+     ] {
+         let k = key.split_whitespace().next().unwrap();
+         let cmd = alloc::format!("name  ed\nsummary  s\n{key}\n---\n");
+         assert_eq!(good(&cmd).unwrap_err(), Reject::Key(3, k.into()), "{key}");
+     }
++    // A window's title is taken (local overlay: the window of an installed native program).
++    good("name  ed\nsummary  s\nusage  ed\nwindow  Ed\n---\n").unwrap();
+     // A body line that looks like a key is text.
+     good("name  ed\nsummary  s\nusage  ed\n---\ndata  ed as ~/.x\nneeds  net-status\n").unwrap();
+     // The messages say the key and the line.
+@@ -531,8 +532,10 @@ fn a_description_that_names_authority_designates_nothing() {
+             && !v.net_web
+             && !v.needs_net_status
+             && v.program.is_none()
+-            && v.window.is_none()
+     );
++    // The window's title stays (local overlay): the shell gives a window to a native
++    // installed program only, through the panel, with the line's grants as its pills.
++    assert_eq!(v.window.as_deref(), Some("ed"));
+     assert_eq!(v.cwd, zoraya_describe::Cwd::Read);
+ }
+ 
+diff --git a/user/src/bin/zosh.rs b/user/src/bin/zosh.rs
+index 1109983a..3c58a982 100644
+--- a/user/src/bin/zosh.rs
++++ b/user/src/bin/zosh.rs
+@@ -484,8 +484,14 @@ enum Escape {
+ 
+ /// One element of a pipeline, ready to start.
+ enum Ready {
+-    /// A native program: its image and start-up record.
+-    Native { image: Handle, table: Option<Table> },
++    /// A native program: its image and start-up record, and for an installed
++    /// one whose description has `window`, the client end of its window's
++    /// channel (slot 5, as the panel gives an application).
++    Native {
++        image: Handle,
++        table: Option<Table>,
++        window: Option<Handle>,
++    },
+     /// A POSIX program (ADR-0153 rule 10): its image, absolute path, the
+     /// table of its bootstrap record with the current directory's index,
+     /// and its report channel's ends.
+@@ -522,8 +528,15 @@ impl Ready {
+     /// Gives back what was made for an element that will not start.
+     fn give_back(self) {
+         match self {
+-            Ready::Native { image, table } => {
++            Ready::Native {
++                image,
++                table,
++                window,
++            } => {
+                 let _ = handle_close(image);
++                if let Some(w) = window {
++                    let _ = handle_close(w);
++                }
+                 if let Some(t) = table {
+                     let _ = handle_close(t.startup);
+                     let _ = handle_close(t.report);
+@@ -1726,7 +1739,14 @@ impl Z {
+             let _ = zoraya_user::netclient::crash(services);
+         }
+         match directory_lookup(DIRECTORY, exec.name) {
+-            Ok(image) => Ok((Ready::Native { image, table }, given)),
++            Ok(image) => Ok((
++                Ready::Native {
++                    image,
++                    table,
++                    window: None,
++                },
++                given,
++            )),
+             Err(s) => {
+                 if let Some(t) = table {
+                     let _ = handle_close(t.startup);
+@@ -1835,17 +1855,34 @@ impl Z {
+             if let Ok(p) = &mut plan {
+                 self.add_saved(exec.name, p);
+             }
++            // An installed program whose description asks for a window gets one
++            // from the panel, with the line's grants as its pills (local overlay).
++            let window = match &plan {
++                Ok(p) if installed.is_some() => self.native_window(exec, path, p),
++                _ => Ok(None),
++            };
++            let window = match window {
++                Ok(w) => w,
++                Err(e) => {
++                    let _ = handle_close(image);
++                    return Err(e);
++                }
++            };
+             let table = plan.and_then(|p| self.table(&p, None));
+             return match table {
+                 Ok(t) => Ok((
+                     Ready::Native {
+                         image,
+                         table: Some(t),
++                        window,
+                     },
+                     String::new(),
+                 )),
+                 Err(e) => {
+                     let _ = handle_close(image);
++                    if let Some(w) = window {
++                        let _ = handle_close(w);
++                    }
+                     Err(e)
+                 }
+             };
+@@ -2097,6 +2134,61 @@ impl Z {
+             .map_err(|why| zoraya_command::error("zosh", Some(exec.name), &why, &[]))
+     }
+ 
++    /// The window of an installed native program whose description has
++    /// `window TITLE` (local overlay, a generic request of the outside work):
++    /// asked of the panel as ADR-0317 asks for a POSIX program's, with the
++    /// same gates (a trusted room, a desktop) and every grant of the line as a
++    /// pill. `None` for a description without the key.
++    fn native_window(
++        &mut self,
++        exec: &Exec<'_>,
++        path: &str,
++        plan: &[grants::Planned],
++    ) -> Result<Option<Handle>, String> {
++        let Some((app, title)) = self
++            .installed_cache
++            .get(exec.name)
++            .and_then(|(_, d)| d.window.clone().map(|t| (d.name.clone(), t)))
++        else {
++            return Ok(None);
++        };
++        // untrusted-gate: window-refusal (as ADR-0317's INV-0317-1)
++        if self.room.as_ref().is_some_and(|r| r.untrusted) {
++            return Err(zoraya_command::error(
++                "room",
++                Some(exec.name),
++                "a window of an installed program is not given in an untrusted room",
++                &["only a trusted room's shell may ask the panel for one"],
++            ));
++        }
++        let Some(panel) = self.panel else {
++            return Err(zoraya_command::error(
++                "zosh",
++                Some(exec.name),
++                "it needs a window, and this session has no desktop to give one",
++                &["start a terminal from the desktop"],
++            ));
++        };
++        let targets = match self.posix_net_scope(exec, path) {
++            Ok(Some((_, scope))) => zoraya_shell::netgrant::pills(&scope),
++            _ => Vec::new(),
++        };
++        let pills = grants::window_pills(plan, &targets).map_err(|n| {
++            zoraya_command::error(
++                "zosh",
++                Some(exec.name),
++                &format!(
++                    "the line gives {n} grants and a window shows {} at most",
++                    grants::MAX_WINDOW_PILLS
++                ),
++                &["a window never shows fewer than it has"],
++            )
++        })?;
++        zoraya_user::windowclient::ask(panel, &app, &title, &pills.join("\n"))
++            .map(Some)
++            .map_err(|why| zoraya_command::error("zosh", Some(exec.name), &why, &[]))
++    }
++
+     /// The own directory the line gives a POSIX program (ADR-0341): from the
+     /// image's description that names `path` and no other, in the room the
+     /// line runs in. A line that sets `HOME`, or names the directory in a
+@@ -3037,9 +3129,22 @@ impl Z {
+         exec: &Exec<'_>,
+         startup: Option<Handle>,
+         streams: [Handle; 3],
++        window: Option<Handle>,
+     ) -> Result<Handle, Status> {
+         let mut buffer = alloc::vec![0u8; 16 * 1024];
+         let mut e = Encoder::new(&mut buffer, job, image);
++        // The window of an installed native program (local overlay): its
++        // compositor channel at slot 5 and the console to write at slot 1,
++        // as the panel's launch record of an application has them.
++        if let Some(end) = window {
++            e.handle(HandleEntry {
++                slot: 5,
++                handle: end,
++                rights: ChannelObject::RIGHTS,
++                transfer: Transfer::Move,
++            });
++            e.handle(dup(CONSOLE.slot(), CONSOLE, Rights::WRITE));
++        }
+         let volume = if NEED_VOLUME.contains(&exec.name) {
+             self.root
+                 .as_ref()
+@@ -6264,8 +6369,12 @@ impl Host for Z {
+         };
+         if let Ok((streams, term_out)) = &streams {
+             for ((exec, r), (ends, tty)) in pipe.programs.iter().zip(ready).zip(streams) {
+-                let (image, table) = match r {
+-                    Ready::Native { image, table } => (image, table),
++                let (image, table, window) = match r {
++                    Ready::Native {
++                        image,
++                        table,
++                        window,
++                    } => (image, table, window),
+                     Ready::Posix {
+                         image,
+                         exe,
+@@ -6397,7 +6506,7 @@ impl Host for Z {
+                 let started = match own {
+                     Ok(own) => {
+                         native.push(own);
+-                        self.spawn_in_job(own, image, exec, startup, *ends)
++                        self.spawn_in_job(own, image, exec, startup, *ends, window)
+                     }
+                     Err(s) => Err(s),
+                 };

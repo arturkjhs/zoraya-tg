@@ -229,8 +229,15 @@ equal the backend's list). The cost is at most one screenful a change.
 | `chat.close` | |
 
 A row is `{id, date, out, sender, kind (text, service, photo, sticker, voice, file), text, detail, reply {sender,
-text}, forward, edited, state (pending, sent, read)}`; `detail` is what a placeholder shows (`1280 × 800`, `0:42`,
-`report.pdf · 248 KB`).
+text}, forward, edited, state (pending, sent, read, failed)}`; `detail` is what a placeholder shows (`1280 × 800`,
+`0:42`, `report.pdf · 248 KB`).
+
+**Protocol 3: a failed send.** A message whose send failed (TDLib's `messageSendingStateFailed`) has `state:
+failed`, never `pending`. The window draws it with an error mark in the error colour where the ticks go and the
+words `Not sent, Enter to retry` at its foot. `messages.retry` `{chat, id}` sends it again: Enter on the chosen
+message, or a press on a failed message that is already chosen. The backend answers as TDLib's `resendMessages`
+does: `message.delete` of the failed row, `message.new` of the new one (`pending`), then its `message.update`. A
+message that did not fail, or a chat that is not open, is refused (`{"ev": "refused", "op", "why"}`).
 
 ### The rest
 
@@ -240,6 +247,26 @@ text}, forward, edited, state (pending, sent, read)}`; `detail` is what a placeh
 | `auth.phone`, `auth.code`, `auth.password` `{value}`; `auth.logout` → `auth.state` `{state, hint, error}` | Protocol 1's, with the refusal as a field of the state that asks again. |
 | `ai.summarize` `{chat, scope}`, `ai.cancel` → `ai.summary` `{chat, state (running, done, failed), text}` | `text` is added to what is shown: the answer streams. |
 | `settings.set` `{key, on}` → `settings` `{items: [{key, label, on}]}` | The backend's own switches. |
+| → `refused` `{op, why}` | A request the backend refused: which op, and why in words that hold no value of it (stage B). The window ignores it. |
+
+### The transport (stage B)
+
+`tgd --window` listens on the socket file `window.sock` in its own directory (`+own ~/.config/tgd`, which is
+`/data/ROOM/tgd`; Zoraya's ADR-0465): on Zoraya a `SOCK_SEQPACKET` socket, on the host a stream. The bytes are
+protocol 3's JSON lines; each packet carries at most 60 KiB of them (a channel message is 64 KiB), so a line may
+span packets (a `messages.reset` of long messages does), and both sides join the packets and cut at newlines.
+`tg` reaches the file through the `+sock /data/home/tgd/window.sock` grant saved on its record: the shell gives it
+the file's directory narrowed to that one name with the right to connect and nothing else. It opens the node with
+`CONNECT` and sends `SocketConnect` with the far end of a new channel, as `libposix`'s `connect` does
+(`tg/tg/src/link.rs`); the transport-free part (`tg/window/src/socket.rs`) is tested on the host.
+
+One window at a time: a new connection replaces the one before it, and the window hears everything from the start
+(`hello`, `auth.state`, `settings`; it asks for its chat window again). While `tgd` is not there, the window shows
+the starting screen with what to do (`tgd is not running. In a terminal: tgd --window`, or the line that grants the
+socket when `tg` holds none) and tries again every 2 s.
+
+Started from the dock, `tg` has no start-up record and so no grant: it shows the sample backend's invented account,
+with `(sample)` in its title (stage A's test).
 
 ### How tgclient's Qt view-models map onto it
 

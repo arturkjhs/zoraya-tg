@@ -32,16 +32,31 @@ def ipv4_ranges() -> list[str]:
 COMMAND = "python3 /usr/lib/tgd/tgd.py"
 
 
-def grant_line(data: str = "~/tg", test_dc: bool = False, ai: bool = True) -> str:
+def net_words(ai: bool = True) -> list[str]:
     words = [f"+net {r}:{PORT}" for r in ipv4_ranges()]
     if ai:
         words.append(f"+net {OPENROUTER}:443")
+    return words
+
+
+def grant_line(data: str = "~/tg", test_dc: bool = False, ai: bool = True) -> str:
+    """The typed line that starts tgd for one run (TG-03), with its data in `data`."""
+    words = net_words(ai)
     words.append(f"+w {data}")
-    # python3 and not /bin/tgd: zosh gives a POSIX program a network connection only under a
-    # description the image carries (descriptions::POSIX), and the image describes python3,
-    # not tgd. /bin/tgd is the same program; it runs without +net (the refusal, the database).
-    words.append(COMMAND + (" --test-dc" if test_dc else ""))
+    # python3 and not /bin/tgd: zosh gives a program that is not installed a network
+    # connection only under a description the image carries (descriptions::POSIX), and the
+    # image describes python3, not tgd. Installed, tgd has its saved words (install_line).
+    words.append(COMMAND + f" --data {data}" + (" --test-dc" if test_dc else ""))
     return " ".join(words)
+
+
+PACKAGE = "/packages/tgd"
+
+
+def install_line(ai: bool = True) -> str:
+    """The line that installs tgd with its saved grants (Zoraya's ADR-0396, ADR-0397): its
+    own directory, where its data and the window's socket are, and the network."""
+    return " ".join(["install", PACKAGE, "+own ~/.config/tgd", *net_words(ai)])
 
 
 class Refused(Exception):

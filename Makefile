@@ -19,8 +19,9 @@
 #   make host     tgd on the host: libtdjson from the same TDLib (build/host/td-lib),
 #                 a venv with cryptography; run out/host/bin/tgd
 #   make test-tgd-host   the protocol test on the host (no account)
-#   make test-tgd-vm     tgd/vm (tgclient's view-models, protocol 2) on the host against a
+#   make test-tgd-vm     tgd/vm (tgclient's view-models, protocol 3) on the host against a
 #                        fake TDLib: no TDLib, no account, no build; python3.12 or newer
+#   make test-tgd-window tgd's window front end over a Unix socket file, on the host (the same)
 #   make smoke-tgd       tgd inside Zoraya under HVF (no account), build/logs/smoke-tgd.log
 #   make smoke-tgd-net   the same with the Internet and the report's line (no account)
 #   make run-tgd         Zoraya with the network, interactive, a kept disk (the hand check)
@@ -32,6 +33,10 @@
 #   make tg-image        ZTGW's kernel with tg in its ramdisk and in the dock, and the volume
 #   make test-tg-window  the window under HVF through Zoraya's GUI test runner, at scale 1 and 2
 #   make run-tg          Zoraya's desktop with tg in the dock, interactive
+#   make test-tg-socket  stage B: tg and tgd installed with saved grants, the window over
+#                        tgd's socket (an invented account), at scale 1 and 2
+#   make run-tg-login    stage B: the desktop with the network and a kept volume, for the
+#                        real login by hand
 #
 # ZORAYA is the Zoraya checkout used as toolchain and image, read-only but for
 # its build outputs; it must have run `make fetch-ports` and
@@ -64,8 +69,8 @@ HOST_OPENSSL ?= $(shell brew --prefix openssl@3 2>/dev/null)
 
 logged = $(1) > $(LOGS)/$(2).log 2>&1 || { echo "$(2) failed: $(LOGS)/$(2).log"; tail -40 $(LOGS)/$(2).log; exit 1; }
 
-.PHONY: fetch td python root smoke clean wheels tgd host test-tgd-host test-tgd-vm smoke-tgd smoke-tgd-net run-tgd \
-	overlay test-tg-host tg tg-image test-tg-window run-tg
+.PHONY: fetch td python root smoke clean wheels tgd host test-tgd-host test-tgd-vm test-tgd-window smoke-tgd smoke-tgd-net run-tgd \
+	overlay test-tg-host tg tg-image test-tg-window run-tg test-tg-socket run-tg-login
 .SUFFIXES:
 
 fetch: $(B)/src/$(TD_FILE)
@@ -266,6 +271,10 @@ VM_PY ?= python3.12
 test-tgd-vm:
 	$(VM_PY) -I tests/tgd_vm.py $(TGC_SRC)/..
 
+# tgd's window front end (tgd/tgd/window.py): protocol 3 over a Unix socket file, on the host.
+test-tgd-window:
+	$(VM_PY) -I tests/tgd_window.py $(TGC_SRC)/..
+
 test-tgd-host: host
 	$(HOST_VENV)/bin/python -I tests/tgd_protocol.py $(HOST_OUT)/bin/tgd
 
@@ -375,6 +384,48 @@ measure-tg-%: tg-image tests/tg-%.script
 
 run-tg: tg-image
 	cd $(ZTGW) && tools/run-qemu.sh --gui --gui-scale $(or $(SCALE),2) --mem 512M --disk $(TGW_DISK) --accel hvf build/zoraya-kernel.elf
+
+# ---------------------------------------------------------------- stage B: installed, over the socket
+# The volume's part for stage B: python3 and its library, tgd's library, and the packages
+# /packages/tg and /packages/tgd, which `install` copies to /apps with their saved grants
+# (docs/tg-window-report.md has the lines). Not /bin/tgd: /bin is on shell.path, which comes
+# before the installed names (ADR-0396 item 6), so tgd would start without its grants.
+STAGEB := $(OUT)/stageb
+TGS_DISK := $(B)/tgs/disk.img
+TGS_DISK_SIZE ?= 768M
+TGS_SCALES ?= 1 2
+TGS_TIMEOUT ?= 600
+TGS_MEM ?= 1024M
+$(STAGEB)/.stamp: $(OUT)/root/.stamp $(TG_ELF) packages/tg/tg.cmd packages/tgd/tgd.cmd
+	rm -rf $(STAGEB) && mkdir -p $(STAGEB)/packages/tg $(STAGEB)/packages/tgd
+	cp -R $(OUT)/root/. $(STAGEB)/ && rm -f $(STAGEB)/bin/tgd $(STAGEB)/.stamp
+	cp $(TG_ELF) $(STAGEB)/packages/tg/tg && cp packages/tg/tg.cmd $(STAGEB)/packages/tg/
+	cp $(B)/tgd.elf $(STAGEB)/packages/tgd/tgd && cp packages/tgd/tgd.cmd $(STAGEB)/packages/tgd/
+	@echo "stageb: the packages tg $$(du -k $(STAGEB)/packages/tg/tg | cut -f1) KiB, tgd $$(du -k $(STAGEB)/packages/tgd/tgd | cut -f1) KiB"
+	@touch $@
+tgs_disk = rm -f $(TGS_DISK) $(TGS_DISK).key && mkdir -p $(B)/tgs && cd $(ZTGW) && EXTRA_ROOT=$(STAGEB):$(TG)/tests/tg-window.root DISK_SIZE=$(TGS_DISK_SIZE) tools/run-disk.sh $(TGS_DISK)
+
+# The window over tgd's socket, both installed (tests/tg-socket.script): the install lines,
+# programs NAME for each, tgd --window --synthetic (an invented account: no TDLib, no
+# network), tg from the terminal; the login, the list, a chat, a failed send and its retry.
+test-tg-socket: tg-image $(STAGEB)/.stamp tests/tg-socket.script tests/ppm2png.py
+	@for scale in $(TGS_SCALES); do \
+	  label=tg-socket-$$scale; \
+	  ( $(tgs_disk) && \
+	    target/debug/zoraya-test-runner --timeout $(TGS_TIMEOUT) --gui-script $(TG)/tests/tg-socket.script \
+	      --qmp build/$$label.qmp --label $$label -- \
+	      tools/run-qemu.sh --test --gui --gui-scale $$scale --mem $(TGS_MEM) --qmp build/$$label.qmp \
+	      --disk $(TGS_DISK) --accel hvf build/zoraya-kernel.elf ); rc=$$?; \
+	  cp $(ZTGW)/target/test-logs/$$label.log $(LOGS)/$$label.log 2>/dev/null; \
+	  [ $$rc = 0 ] || exit $$rc; \
+	  python3 tests/ppm2png.py $(ZTGW)/build/shots docs/shots $$label || exit 1; \
+	done
+
+# The architect's run: Zoraya's desktop with the network and a kept volume (FRESH=1 makes
+# it again), the packages on it, for the real login by hand (docs/tg-window-report.md).
+run-tg-login: tg-image $(STAGEB)/.stamp
+	@if [ -n "$(FRESH)" ] || [ ! -f $(TGS_DISK) ]; then $(tgs_disk); fi
+	cd $(ZTGW) && tools/run-qemu.sh --gui --gui-scale $(or $(SCALE),2) --net --mem $(TGS_MEM) --disk $(TGS_DISK) --accel hvf build/zoraya-kernel.elf
 
 clean:
 	rm -rf $(B)/work $(B)/host $(B)/td-zoraya $(B)/python-* $(B)/rootfs-python $(B)/obj $(B)/smoke $(OUT)
