@@ -33,6 +33,9 @@ then tg: ready
 serial tg: chats 7 from 0: "Mark Owens"
 pause 500
 shot tgs-list
+# The frame's pills are tg's package and its socket only: where a pill of the current
+# directory (+r /home) was, the frame's own colour (tg.cmd's cwd none, R28).
+region 565 111 50 17 f7f7f8
 #
 # The club (row 6): its newest 40 messages, Cyrillic, a photo's placeholder; 47 were
 # unread, more than the page, so the first unread one is not loaded yet: the pill at the

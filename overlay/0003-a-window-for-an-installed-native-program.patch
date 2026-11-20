@@ -1,5 +1,5 @@
 diff --git a/crates/zoraya-describe/src/lib.rs b/crates/zoraya-describe/src/lib.rs
-index 49e91e8b..57d33754 100644
+index 49e91e8b..8a3e15ac 100644
 --- a/crates/zoraya-describe/src/lib.rs
 +++ b/crates/zoraya-describe/src/lib.rs
 @@ -1530,10 +1530,13 @@ fn finish(sections: &mut Vec<Section>, mut s: Section, line: usize) -> Result<()
@@ -20,7 +20,36 @@ index 49e91e8b..57d33754 100644
  ];
  
  /// The first header line of `bytes` whose key is outside [`VOLUME_KEYS`]:
-@@ -1582,7 +1585,8 @@ pub fn for_volume(mut d: Description) -> Description {
+@@ -1546,12 +1549,17 @@ pub fn volume_key_problem(bytes: &[u8]) -> Option<(usize, String)> {
+         if line == "---" {
+             return None;
+         }
+-        let Some((key, _)) = next_word(line) else {
++        let Some((key, rest)) = next_word(line) else {
+             continue;
+         };
+         if key.starts_with('#') {
+             continue;
+         }
++        // `cwd none` only takes away (local overlay): the program is not given the
++        // current directory. `cwd read`, which would add nothing, is refused as before.
++        if key == "cwd" && rest.trim() == "none" {
++            continue;
++        }
+         if !VOLUME_KEYS.contains(&key) {
+             return Some((i + 1, key.to_string()));
+         }
+@@ -1576,13 +1584,17 @@ pub fn for_volume(mut d: Description) -> Description {
+     }
+     d.whens.clear();
+     d.names.clear();
+-    d.cwd = Cwd::Read;
++    // `cwd none` is kept (local overlay: it gives less); anything else is the default.
++    if d.cwd != Cwd::None {
++        d.cwd = Cwd::Read;
++    }
+     d.program = None;
+     d.needs_net_status = false;
      d.net_web = false;
      d.reach = None;
      d.data = None;
@@ -31,10 +60,16 @@ index 49e91e8b..57d33754 100644
      d
  }
 diff --git a/crates/zoraya-describe/src/tests.rs b/crates/zoraya-describe/src/tests.rs
-index 6bcf2b3b..9f1f6cba 100644
+index 6bcf2b3b..7fb34227 100644
 --- a/crates/zoraya-describe/src/tests.rs
 +++ b/crates/zoraya-describe/src/tests.rs
-@@ -954,7 +954,6 @@ fn a_volume_description_has_only_the_help_keys() {
+@@ -949,12 +949,11 @@ fn a_volume_description_has_only_the_help_keys() {
+         "data ed as ~/.ed",
+         "needs net-status",
+         "program /bin/ed",
+-        "cwd none",
++        "cwd read",
+         "setting ed.x text a b",
          "when a B read",
          "net web",
          "reach h tcp 22",
@@ -42,7 +77,7 @@ index 6bcf2b3b..9f1f6cba 100644
          "names a b",
          "topic ed",
      ] {
-@@ -968,6 +967,10 @@ fn a_volume_description_has_only_the_help_keys() {
+@@ -968,6 +967,15 @@ fn a_volume_description_has_only_the_help_keys() {
      }
      // Not UTF-8: the parser says so; the key check has nothing to add.
      assert_eq!(volume_key_problem(b"\xff"), None);
@@ -50,6 +85,11 @@ index 6bcf2b3b..9f1f6cba 100644
 +    let w = "name ed\nsummary s\nusage ed\nwindow Ed\n";
 +    assert_eq!(volume_key_problem(w.as_bytes()), None);
 +    assert_eq!(for_volume(parse(w.as_bytes()).unwrap()).window.as_deref(), Some("Ed"));
++    // `cwd none` is taken and kept (local overlay): it only takes the current directory away.
++    let n = "name ed\nsummary s\nusage ed\ncwd none\n";
++    assert_eq!(volume_key_problem(n.as_bytes()), None);
++    assert_eq!(for_volume(parse(n.as_bytes()).unwrap()).cwd, Cwd::None);
++    assert_eq!(for_volume(parse(w.as_bytes()).unwrap()).cwd, Cwd::Read);
  }
  
  #[test]
@@ -88,10 +128,16 @@ index 0acd46de..f590c16a 100644
      for bad in ["webs", "web x", "Web", " web"] {
          assert_eq!(
 diff --git a/crates/zoraya-settings/src/tests_apps.rs b/crates/zoraya-settings/src/tests_apps.rs
-index 2c6e1f6c..c67132e3 100644
+index 2c6e1f6c..d828989c 100644
 --- a/crates/zoraya-settings/src/tests_apps.rs
 +++ b/crates/zoraya-settings/src/tests_apps.rs
-@@ -482,13 +482,14 @@ fn one_case_per_refusal_of_install() {
+@@ -477,18 +477,22 @@ fn one_case_per_refusal_of_install() {
+         "data  ed as ~/.ed",
+         "needs  net-status",
+         "program  /bin/ed",
+-        "cwd  none",
++        "cwd  read",
+         "setting  ed.x  text  a  b",
          "when  a B read",
          "net  web",
          "reach  HOST tcp 22",
@@ -104,23 +150,29 @@ index 2c6e1f6c..c67132e3 100644
      }
 +    // A window's title is taken (local overlay: the window of an installed native program).
 +    good("name  ed\nsummary  s\nusage  ed\nwindow  Ed\n---\n").unwrap();
++    // `cwd none` is taken too (local overlay): it only takes the current directory away.
++    let c = good("name  ed\nsummary  s\nusage  ed\ncwd  none\n---\n").unwrap();
++    assert_eq!(c.description.cwd, zoraya_describe::Cwd::None);
      // A body line that looks like a key is text.
      good("name  ed\nsummary  s\nusage  ed\n---\ndata  ed as ~/.x\nneeds  net-status\n").unwrap();
      // The messages say the key and the line.
-@@ -531,8 +532,10 @@ fn a_description_that_names_authority_designates_nothing() {
+@@ -531,9 +535,12 @@ fn a_description_that_names_authority_designates_nothing() {
              && !v.net_web
              && !v.needs_net_status
              && v.program.is_none()
 -            && v.window.is_none()
      );
+-    assert_eq!(v.cwd, zoraya_describe::Cwd::Read);
 +    // The window's title stays (local overlay): the shell gives a window to a native
 +    // installed program only, through the panel, with the line's grants as its pills.
 +    assert_eq!(v.window.as_deref(), Some("ed"));
-     assert_eq!(v.cwd, zoraya_describe::Cwd::Read);
++    // `cwd none` stays too (local overlay): it gives less, never more.
++    assert_eq!(v.cwd, zoraya_describe::Cwd::None);
  }
  
+ #[test]
 diff --git a/user/src/bin/zosh.rs b/user/src/bin/zosh.rs
-index 1109983a..3c58a982 100644
+index 1109983a..9544d521 100644
 --- a/user/src/bin/zosh.rs
 +++ b/user/src/bin/zosh.rs
 @@ -484,8 +484,14 @@ enum Escape {
@@ -173,7 +225,26 @@ index 1109983a..3c58a982 100644
              Err(s) => {
                  if let Some(t) = table {
                      let _ = handle_close(t.startup);
-@@ -1835,17 +1855,34 @@ impl Z {
+@@ -1829,23 +1849,52 @@ impl Z {
+                 }
+             }
+         }
+-        let undescribed = zoraya_describe::parse(UNDESCRIBED.as_bytes()).map_err(|_| fail("?"))?;
++        let mut undescribed = zoraya_describe::parse(UNDESCRIBED.as_bytes()).map_err(|_| fail("?"))?;
++        // An installed program whose description says `cwd none` is not given the current
++        // directory (local overlay): the one key of its description that counts at the
++        // launch, and it only takes away. The description is the one just checked with the
++        // program's bytes.
++        if installed.is_some()
++            && self
++                .installed_cache
++                .get(exec.name)
++                .is_some_and(|(_, d)| d.cwd == zoraya_describe::Cwd::None)
++        {
++            undescribed.cwd = zoraya_describe::Cwd::None;
++        }
+         if native {
+             let mut plan = self.plan_with(exec, &undescribed, false);
              if let Ok(p) = &mut plan {
                  self.add_saved(exec.name, p);
              }
@@ -208,7 +279,7 @@ index 1109983a..3c58a982 100644
                      Err(e)
                  }
              };
-@@ -2097,6 +2134,61 @@ impl Z {
+@@ -2097,6 +2146,61 @@ impl Z {
              .map_err(|why| zoraya_command::error("zosh", Some(exec.name), &why, &[]))
      }
  
@@ -270,7 +341,7 @@ index 1109983a..3c58a982 100644
      /// The own directory the line gives a POSIX program (ADR-0341): from the
      /// image's description that names `path` and no other, in the room the
      /// line runs in. A line that sets `HOME`, or names the directory in a
-@@ -3037,9 +3129,22 @@ impl Z {
+@@ -3037,9 +3141,22 @@ impl Z {
          exec: &Exec<'_>,
          startup: Option<Handle>,
          streams: [Handle; 3],
@@ -293,7 +364,7 @@ index 1109983a..3c58a982 100644
          let volume = if NEED_VOLUME.contains(&exec.name) {
              self.root
                  .as_ref()
-@@ -6264,8 +6369,12 @@ impl Host for Z {
+@@ -6264,8 +6381,12 @@ impl Host for Z {
          };
          if let Ok((streams, term_out)) = &streams {
              for ((exec, r), (ends, tty)) in pipe.programs.iter().zip(ready).zip(streams) {
@@ -308,7 +379,7 @@ index 1109983a..3c58a982 100644
                      Ready::Posix {
                          image,
                          exe,
-@@ -6397,7 +6506,7 @@ impl Host for Z {
+@@ -6397,7 +6518,7 @@ impl Host for Z {
                  let started = match own {
                      Ok(own) => {
                          native.push(own);

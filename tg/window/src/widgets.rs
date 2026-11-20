@@ -148,7 +148,7 @@ impl Widget for Field {
             draw::text(c, &mut p.ui, self.placeholder, px, inner.x, base, fg, inner);
         }
         // The text moves left when the cursor would leave the field.
-        let before = p.ui.measure(&shown[..cursor], px);
+        let before = draw::measure(&mut p.ui, &shown[..cursor], px);
         let shift = (before - inner.w + k).max(0);
         let fg = p.palette.fg_text;
         draw::text(c, &mut p.ui, &shown, px, inner.x - shift, base, fg, inner);
@@ -290,7 +290,7 @@ impl Widget for Btn {
         draw::round(c, r, radius, bg);
         draw::outline(c, r, radius, k, p.palette.border);
         let px = text::BODY.physical(p.scale);
-        let w = p.medium.measure(&self.label, px);
+        let w = draw::measure(&mut p.medium, &self.label, px);
         let base = draw::baseline(r.y, r.h, px);
         draw::text(c, &mut p.medium, &self.label, px, r.x + (r.w - w) / 2, base, fg, r);
         if focused {

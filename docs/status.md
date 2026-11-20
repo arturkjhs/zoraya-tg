@@ -36,3 +36,10 @@ restart keeping the login, `programs tgd`/`programs tg` listing exactly what eac
 display without zoom-to-fit and at scale 1; overlay 0004, R25, R26; tg's smaller first sizes), and the path walked
 by a scripted GUI run in run-tg-login's own mode on a copy of the kept volume (`make walk-tg-login`, twice). The tests
 no longer touch the kept volume. **Ready again for the architect's login.**
+
+2026-11-20: the architect's real login worked. Emoji were boxes: request R27 (an emoji font, flags, wide
+characters), and until then the window draws an emoji its fonts lack as one small neutral mark. The frame's
+`+r /home` was the launch's current directory (installed descriptions could not say `cwd none`): `tg.cmd` says it now,
+overlay 0003 lets it count (R28), and `programs tg` lists only `+sock`. The kept volume was upgraded in place
+(`make tg-upgrade`: tg only, tgd's files and the login untouched).
+

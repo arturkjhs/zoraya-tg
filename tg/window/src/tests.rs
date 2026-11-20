@@ -351,6 +351,43 @@ fn a_word_longer_than_a_line_is_cut_and_newlines_break() {
 }
 
 #[test]
+fn an_emoji_the_fonts_lack_is_one_small_mark_not_a_box() {
+    use zoraya_text::Source;
+    let mut p = Painter::new(Scale::ONE, Appearance::Light);
+    let boxes = |p: &Painter, s: &str| s.chars().filter(|&c| p.ui.fonts.lookup(c).0 == Source::Box).count();
+    // What the fonts have is left as it is, borrowed.
+    for s in ["plain", "Книжковий клуб", "ґанок — «так»"] {
+        assert!(matches!(draw::shown(&p.ui, s), std::borrow::Cow::Borrowed(_)), "{s}");
+    }
+    let mark = draw::shown(&p.ui, "\u{1F600}").into_owned();
+    assert_eq!(mark.chars().count(), 1);
+    assert_eq!(boxes(&p, &mark), 0, "the mark is a glyph of the fonts");
+    // A flag (two regional indicators), a family joined with U+200D, a thumb with a skin
+    // tone, a selector, a keycap and a subdivision's flag with its tags: one mark each.
+    let cases = [
+        ("\u{1F1FA}\u{1F1E6} Україна", format!("{mark} Україна")),
+        ("\u{1F1FA}\u{1F1E6}\u{1F1F5}\u{1F1F1}", format!("{mark}{mark}")),
+        ("a\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}b", format!("a{mark}b")),
+        ("\u{1F44D}\u{1F3FD}\u{1F44D}", format!("{mark}{mark}")),
+        ("ok\u{1F642}\u{FE0F}!", format!("ok{mark}!")),
+        ("1\u{FE0F}\u{20E3}", String::from("1")),
+        ("\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}", mark.clone()),
+    ];
+    for (s, want) in cases {
+        let got = draw::shown(&p.ui, s);
+        assert_eq!(got, want, "{s:?}");
+        assert_eq!(boxes(&p, &got), 0, "{s:?}");
+        // Measured as it is drawn, and narrower than the boxes were.
+        assert_eq!(draw::measure(&mut p.ui, s, 13), p.ui.measure(&got, 13));
+    }
+    // A script with no font keeps the box: that one is honest.
+    assert_eq!(draw::shown(&p.ui, "\u{4E2D}"), "\u{4E2D}");
+    // A title cut to a width still ends in the ellipsis, with no box before it.
+    let t = draw::fit(&mut p.medium, "\u{1F1FA}\u{1F1E6} Дуже довга назва чату з прапором", 13, 120);
+    assert!(t.ends_with('…') && boxes(&p, &draw::shown(&p.medium, &t)) == 0, "{t}");
+}
+
+#[test]
 fn a_shape_from_its_corners_is_the_shape_from_one_mask() {
     use zoraya_paint::{self as paint, Canvas};
     use zoraya_tokens::shape;

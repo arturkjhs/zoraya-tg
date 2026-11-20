@@ -150,7 +150,7 @@ impl Widget for MainView {
             let px = text::BODY.physical(p.scale);
             let s = "Choose a chat to read it";
             let x0 = r.x + (LIST_W + 1) * k;
-            let w = p.ui.measure(s, px);
+            let w = draw::measure(&mut p.ui, s, px);
             let base = draw::baseline(r.y + r.h / 2 - 10 * k, 20 * k, px);
             draw::text(c, &mut p.ui, s, px, x0 + (r.right() - x0 - w) / 2, base, pal.fg_text_secondary, r);
         }

@@ -166,7 +166,7 @@ impl Messages {
             foot_w: 0,
         };
         if m.kind == MessageKind::Service {
-            l.w = (p.ui.measure(&m.text.text, cpx) + 20 * k).min(avail);
+            l.w = (draw::measure(&mut p.ui, &m.text.text, cpx) + 20 * k).min(avail);
             l.h = 24 * k;
             return l;
         }
@@ -175,21 +175,19 @@ impl Messages {
         let mut y = PAD_Y * k;
         if group && !m.out {
             l.name = Some(y);
-            inner = inner.max(p.medium.measure(&m.sender, px).min(max_inner));
+            inner = inner.max(draw::measure(&mut p.medium, &m.sender, px).min(max_inner));
             y += 18 * k;
         }
         if let Some(f) = &m.forward {
             l.forward = Some(y);
-            let w = p.ui.measure(&format!("Forwarded from {f}"), cpx);
+            let w = draw::measure(&mut p.ui, &format!("Forwarded from {f}"), cpx);
             inner = inner.max(w.min(max_inner));
             y += 17 * k;
         }
         if let Some(q) = &m.reply {
             l.reply = Some(y);
-            let w = p
-                .ui
-                .measure(&q.text, cpx)
-                .max(p.medium.measure(&q.sender, cpx))
+            let w = draw::measure(&mut p.ui, &q.text, cpx)
+                .max(draw::measure(&mut p.medium, &q.sender, cpx))
                 + 10 * k;
             inner = inner.max(w.min(max_inner));
             y += 36 * k;
@@ -208,7 +206,7 @@ impl Messages {
         }
         l.body = y;
         let foot = foot_text(m, offset);
-        l.foot_w = p.ui.measure(&foot, cpx) + if m.out { 20 * k } else { 0 };
+        l.foot_w = draw::measure(&mut p.ui, &foot, cpx) + if m.out { 20 * k } else { 0 };
         if !m.text.text.is_empty() {
             let segs = draw::styles(&m.text);
             l.lines = draw::wrap(p, &m.text.text, &segs, px, max_inner);
@@ -505,7 +503,7 @@ impl Messages {
         }
         let cpx = text::CAPTION.physical(p.scale);
         let pill = |p: &mut Painter, c: &mut Canvas<'_>, s: &str, y: i32| {
-            let w = p.ui.measure(s, cpx) + 24 * k;
+            let w = draw::measure(&mut p.ui, s, cpx) + 24 * k;
             let r = draw::rect(region.right() - 14 * k - w, y, w, 24 * k);
             draw::round(c, r, (12 * k) as u32, pal.accent);
             let base = draw::baseline(r.y, r.h, cpx);
@@ -525,7 +523,7 @@ impl Messages {
     fn pill(p: &mut Painter, c: &mut Canvas<'_>, s: &str, mid: i32, y: i32, clip: paint::Rect) {
         let k = p.scale.factor() as i32;
         let cpx = text::CAPTION.physical(p.scale);
-        let w = p.ui.measure(s, cpx) + 20 * k;
+        let w = draw::measure(&mut p.ui, s, cpx) + 20 * k;
         let r = draw::rect(mid - w / 2, y, w, 22 * k).intersect(&clip);
         let full = draw::rect(mid - w / 2, y, w, 22 * k);
         if r == full {
@@ -628,11 +626,11 @@ impl Messages {
             let word = kind_word(m.kind);
             if th > 60 * k {
                 // A picture's place: its name and size in the middle.
-                let w = p.medium.measure(word, px);
+                let w = draw::measure(&mut p.medium, word, px);
                 let base = draw::baseline(t.y + th / 2 - 18 * k, 18 * k, px);
                 draw::text(c, &mut p.medium, word, px, t.x + (tw - w) / 2, base, pal.fg_text_secondary, t);
                 let d = draw::fit(&mut p.ui, &m.detail, cpx, tw - 12 * k);
-                let w = p.ui.measure(&d, cpx);
+                let w = draw::measure(&mut p.ui, &d, cpx);
                 let base = draw::baseline(t.y + th / 2, 18 * k, cpx);
                 draw::text(c, &mut p.ui, &d, cpx, t.x + (tw - w) / 2, base, pal.fg_text_secondary, t);
             } else {
@@ -747,7 +745,7 @@ impl Widget for Messages {
         if m.open.is_some() && m.messages.is_empty() {
             let px = text::BODY.physical(p.scale);
             let s = "No messages here yet";
-            let w = p.ui.measure(s, px);
+            let w = draw::measure(&mut p.ui, s, px);
             let base = draw::baseline(region.y + region.h / 2 - 10 * k, 20 * k, px);
             draw::text(c, &mut p.ui, s, px, region.x + (region.w - w) / 2, base, pal.fg_text_secondary, region);
         }
@@ -969,7 +967,7 @@ impl Widget for Composer {
         if focused {
             let line = &self.lines[at.min(self.lines.len() - 1)];
             let upto = m.composer.cursor.clamp(line.a, t.len());
-            let x = inner.x + p.ui.measure(&t[line.a..upto], px);
+            let x = inner.x + draw::measure(&mut p.ui, &t[line.a..upto], px);
             let top = y + at as i32 * LINE * k;
             c.fill(draw::rect(x, top + 2 * k, k, (LINE - 4) * k).intersect(&inner), pal.fg_text);
             let ring = LRect::new(

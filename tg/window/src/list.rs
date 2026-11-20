@@ -65,7 +65,7 @@ impl ChatList {
             draw::initials(&row.title)
         };
         let hpx = text::HEADING.physical(p.scale);
-        let iw = p.medium.measure(&ini, hpx);
+        let iw = draw::measure(&mut p.medium, &ini, hpx);
         let base = draw::baseline(a.y, a.h, hpx);
         draw::text(c, &mut p.medium, &ini, hpx, a.x + (a.w - iw) / 2, base, pal.fg_text, a);
 
@@ -75,7 +75,7 @@ impl ChatList {
         let x = r.x + TEXT_X * k;
         // The first line: the name, muted's mark, the time at the right.
         let when = time::list_time(row.date, now, offset);
-        let tw = p.ui.measure(&when, cpx);
+        let tw = draw::measure(&mut p.ui, &when, cpx);
         let line1 = draw::baseline(r.y + 10 * k, 20 * k, px);
         draw::text(c, &mut p.ui, &when, cpx, right - tw, line1, pal.fg_text_secondary, r);
         let mark = if row.muted { 16 * k } else { 0 };
@@ -96,7 +96,7 @@ impl ChatList {
             } else {
                 format!("{}", row.unread)
             };
-            let nw = p.medium.measure(&n, cpx);
+            let nw = draw::measure(&mut p.medium, &n, cpx);
             let bw = (nw + 12 * k).max(20 * k);
             let b = draw::rect(right - bw, r.y + 32 * k, bw, 20 * k);
             let bg = if row.muted {
@@ -147,7 +147,7 @@ impl Widget for ChatList {
             };
             let px = text::BODY.physical(p.scale);
             let s = draw::fit(&mut p.ui, &s, px, r.w - 24 * k);
-            let w = p.ui.measure(&s, px);
+            let w = draw::measure(&mut p.ui, &s, px);
             let base = draw::baseline(r.y + 24 * k, 20 * k, px);
             draw::text(c, &mut p.ui, &s, px, r.x + (r.w - w) / 2, base, pal.fg_text_secondary, r);
         }

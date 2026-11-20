@@ -70,7 +70,7 @@ HOST_OPENSSL ?= $(shell brew --prefix openssl@3 2>/dev/null)
 logged = $(1) > $(LOGS)/$(2).log 2>&1 || { echo "$(2) failed: $(LOGS)/$(2).log"; tail -40 $(LOGS)/$(2).log; exit 1; }
 
 .PHONY: fetch td python root smoke clean wheels tgd host test-tgd-host test-tgd-vm test-tgd-window smoke-tgd smoke-tgd-net run-tgd \
-	overlay test-tg-host tg tg-image test-tg-window run-tg test-tg-socket run-tg-login tg-install test-tg-real-start walk-tg-login
+	overlay test-tg-host tg tg-image test-tg-window run-tg test-tg-socket run-tg-login tg-install test-tg-real-start walk-tg-login tg-upgrade
 .SUFFIXES:
 
 fetch: $(B)/src/$(TD_FILE)
@@ -470,19 +470,43 @@ run-tg-login: tg-image $(STAGEB)/.stamp $(TGS_INSTALL)
 	@if [ -n "$(FRESH)" ] || [ ! -f $(TGS_DISK) ]; then ( $(call tgs_disk,$(TGS_DISK)) ) && ( $(call tgs_install,$(TGS_DISK)) ) || exit 1; fi
 	cd $(ZTGW) && tools/run-qemu.sh --gui --gui-scale $(or $(SCALE),1) --display-opts $(TGS_DISPLAY) --net --mem $(TGS_MEM) --disk $(TGS_DISK) --accel hvf build/zoraya-kernel.elf
 
+# A new tg on a kept volume, in place (tests/tg-upgrade.script): its two files fetched over
+# /packages/tg on a console boot from a host server of that one directory (127.0.0.1 only,
+# reached through one guestfwd rule; the guest's network is restrict=on), then
+# install --keep. tgd's files (the api id and hash, the session) are not touched. VOL is the
+# volume (default: the kept one).
+VOL ?= $(TGS_DISK)
+TGU := $(B)/tgu
+tgu_run = rm -rf $(TGU) && mkdir -p $(TGU)/www && cp $(STAGEB)/packages/tg/tg $(STAGEB)/packages/tg/tg.cmd $(TGU)/www/ && \
+	  (cd $(ZTGW) && cargo build -q -p zoraya-test-httpd) && \
+	  port=$$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])') && \
+	  kib=$$(( ($$(wc -c < $(TGU)/www/tg) + $$(wc -c < $(TGU)/www/tg.cmd) + 1023) / 1024 )) && \
+	  sed -e "s/@PORT@/$$port/g" -e "s/@KIB@/$$kib/g" tests/tg-upgrade.script > $(TGU)/raw.script && \
+	  python3 tests/expand_script.py $(TGU)/raw.script "" > $(TGU)/tg-upgrade.script && \
+	  { python3 -m http.server --bind 127.0.0.1 --directory $(TGU)/www $$port > $(TGU)/httpd.log 2>&1 & srv=$$!; \
+	  sleep 1; ( cd $(ZTGW) && target/debug/zoraya-test-runner --timeout 300 --script $(TGU)/tg-upgrade.script --label tg-upgrade -- \
+	    tools/run-qemu.sh --test --keys --net --net-guestfwd "10.0.2.50:$$port=$(ZTGW)/target/debug/zoraya-test-httpd --relay 127.0.0.1:$$port" \
+	    --mem $(TGS_MEM) --disk $(1) --accel hvf build/zoraya-kernel.elf ); rc=$$?; kill $$srv; \
+	  cp $(ZTGW)/target/test-logs/tg-upgrade.log $(LOGS)/tg-upgrade.log 2>/dev/null; [ $$rc = 0 ]; }
+tg-upgrade: tg-image $(STAGEB)/.stamp tests/tg-upgrade.script tests/expand_script.py
+	@[ -f $(VOL) ] || { echo "tg-upgrade: no volume $(VOL)"; exit 1; }
+	$(call tgu_run,$(VOL))
+
 # The architect's path, walked by the GUI runner in run-tg-login's own mode (interactive,
 # the same cocoa display) on a copy of the kept volume, with no network
-# (tests/tg-login-path.script): a cocoa window shows on the host while it runs.
+# (tests/tg-login-path.script): a cocoa window shows on the host while it runs. No
+# screenshot: the volume holds the account. UPGRADE=1 runs tg-upgrade on the copy first.
 TGL_COPY := $(B)/tgl/disk.img
 walk-tg-login: tg-image tests/tg-login-path.script
 	@[ -f $(TGS_DISK) ] || { echo "walk-tg-login: no volume yet: make run-tg-login (or make tg-install)"; exit 1; }
 	@mkdir -p $(B)/tgl && cp $(TGS_DISK) $(TGL_COPY) && cp $(TGS_DISK).key $(TGL_COPY).key
+	@if [ -n "$(UPGRADE)" ]; then $(MAKE) --no-print-directory tg-upgrade VOL=$(TGL_COPY) || { rm -f $(TGL_COPY) $(TGL_COPY).key; exit 1; }; fi
 	( cd $(ZTGW) && target/debug/zoraya-test-runner --timeout 300 --gui-script $(TG)/tests/tg-login-path.script \
 	    --qmp build/tg-login-1.qmp --label tg-login-1 -- \
 	    tools/run-qemu.sh --gui --gui-scale 1 --display-opts $(TGS_DISPLAY) --mem $(TGS_MEM) --qmp build/tg-login-1.qmp \
 	    --disk $(TGL_COPY) --accel hvf build/zoraya-kernel.elf ); rc=$$?; \
 	  cp $(ZTGW)/target/test-logs/tg-login-1.log $(LOGS)/tg-login-1.log 2>/dev/null; rm -f $(TGL_COPY) $(TGL_COPY).key; \
-	  [ $$rc = 0 ] && python3 tests/ppm2png.py $(ZTGW)/build/shots docs/shots tg-login-1
+	  [ $$rc = 0 ]
 
 clean:
 	rm -rf $(B)/work $(B)/host $(B)/td-zoraya $(B)/python-* $(B)/rootfs-python $(B)/obj $(B)/smoke $(OUT)

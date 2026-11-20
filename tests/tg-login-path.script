@@ -1,9 +1,13 @@
 # TG-04 stage B, the architect's path as typed by hand (make walk-tg-login): the desktop of
 # make run-tg-login (interactive, QEMU's cocoa display without zoom-to-fit, scale 1) on a
-# copy of the kept volume, with no network (the volume may hold the architect's api id and
-# hash: nothing reaches Telegram, tgd starts with --no-probe). The first terminal is closed
-# and comes back with a desktop to give windows (overlay 0004); in it tgd --window & and
-# tg &; the window shows the login's phone form (Next in accent, 3b4f6b).
+# copy of the kept volume, with no network (the volume holds the architect's api id and
+# hash and, since the login, the account's session: nothing reaches Telegram, tgd starts
+# with --no-probe). The first terminal is closed and comes back with a desktop to give
+# windows (overlay 0004); in it tgd --window & and tg &. No screenshot and no text of the
+# window is taken: what it shows may be the account's. Checked instead, by two strips of its
+# frame: the window is there (the line between its two panes, d7d9de), and where a pill of the
+# current directory (+r /home) would be, the frame's own colour (cwd none, R28): its pills
+# are its package and its socket only.
 serial init: gui: gpu on its own page
 serial compd: 1024x768
 screen Type help to begin, or help tour.
@@ -21,10 +25,9 @@ type tg &\r
 pause 8000
 click 500 119
 pause 1500
-region 349 412 5 12 3b4f6b
-shot tgl-phone
+region 405 140 1 500 d7d9de
+region 565 111 50 17 f7f7f8
 # The dock's terminal tile (x 327: the dock has the room chip and + now) opens another
 # terminal, from the panel, which can give windows too.
 click 327 722
 pause 3000
-shot tgl-term

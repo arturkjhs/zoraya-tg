@@ -43,7 +43,7 @@
 |---|---|---|
 | `0001-extra-programs-in-the-ramdisk.patch` | `Makefile`: `EXTRA_PROGRAMS` (ELF files added to the ramdisk), `EXTRA_APPS` exported to the build | R21: native programs from outside the repository in the image |
 | `0002-extra-applications-in-the-dock.patch` | `zoraya-panel`: `apps()` = the four of `APPS`, then the names of `ZORAYA_EXTRA_APPS`; the dock's text and a tile's press use it | R22: a dock tile and a launch record for a program that is not one of the four |
-| `0003-a-window-for-an-installed-native-program.patch` | `zoraya-describe`: a volume description may say `window TITLE`; `zosh`: an installed native program with it gets its window from the panel (ADR-0317's request, the line's grants as pills) at slot 5 and the console at slot 1, beside its start-up record with the saved words; `zoraya-panel`: a `+sock PATH` pill is taken (R24). 144 changed lines with their tests. | R22's second half; R24 |
+| `0003-a-window-for-an-installed-native-program.patch` | `zoraya-describe`: a volume description may say `window TITLE`; `zosh`: an installed native program with it gets its window from the panel (ADR-0317's request, the line's grants as pills) at slot 5 and the console at slot 1, beside its start-up record with the saved words; `zoraya-panel`: a `+sock PATH` pill is taken (R24); a volume description may say `cwd none`, which the native launch keeps (R28). About 185 changed lines with their tests. | R22's second half; R24; R28 |
 | `0004-a-new-first-terminal-gets-a-desktop.patch` | `init`: when the first terminal closes, the panel and its chooser start again with the new terminal, so its shell has the channel to the panel for windows. 17 changed lines. | R25 |
 | (no patch) | the heap and the platform copied into `tg/tg` | R20: the parts of a native window program as crates of their own |
 
@@ -304,8 +304,35 @@ test before had booted with `--test` (no display), which none of this touches. R
 command (interactive, the same cocoa display, scale 1) on a copy of the kept volume, without network: the first
 terminal closed and opened again by init; in it `tgd --window --no-probe &` (the saved api id and hash: nothing
 asked) and `tg &`; the window shows the phone form (`docs/shots/tgl-phone.png`); the terminal tile brings the
-terminal forward (`tgl-term.png`). After the fixes `make test-tg-socket`, `make test-tg-window` and
+terminal forward. After the fixes `make test-tg-socket`, `make test-tg-window` and
 `make test-tg-real-start` pass again.
+
+## After the real login: emoji and the window's pills (2026-11-20)
+
+The architect's login worked (the list, chats, Cyrillic, replies and links). Two things were left:
+
+1. **Emoji were boxes**, in titles (a flag) and in messages: the system has no emoji font. The generic request is R27
+   (Noto Emoji in `/system/fonts` through `zoraya-text`, flags from regional-indicator pairs, wide characters).
+   Until it lands the window draws each emoji sequence its fonts lack as one small neutral mark (`◦`, the first of
+   `◦` `•` `·` the fonts have): a flag's two indicators, a sequence joined with U+200D and its skin tones and
+   selectors are one mark; a keycap's parts vanish and leave the digit. Measuring goes the same way, so lines wrap
+   and titles are cut where they are drawn. A script with no font keeps the box. `draw::shown`, with a host test.
+2. **The frame showed `+r /home`.** Not a saved grant (`programs tg` listed only `+sock`) and not the panel: the
+   launch. Every program a shell starts gets its current directory read only (ADR-0153 rule 1) unless its
+   description says `cwd none`, and an installed program's description could not say it (ADR-0396 item 5); the
+   native launch planned it as an undescribed program, `cwd read`. tg reads no file, so it is not needed. Now
+   `tg.cmd` says `cwd none`, and `overlay/0003` lets an installed description say it (only `none`: `cwd read` is
+   still refused) and the native launch keep it (R28). The frame's pills are `+r /apps/tg` (its package, which every
+   installed program is given: ADR-0397 item 5) and `+sock /data/home/tgd/window.sock`.
+
+**The kept volume, upgraded in place.** It holds the login, so it is not made again: `make tg-upgrade` boots it on the
+console with a network that reaches one host server only (127.0.0.1, serving the new package's two files through a
+guestfwd rule; restrict=on), `fetch`es `tg` and `tg.cmd` over `/packages/tg`, and runs `install --keep /packages/tg`,
+which replaces tg and keeps its saved `+sock`; `programs tg` then lists only `+sock`. tgd and its files (the api id
+and hash, TDLib's session) are not touched. Tried first on a copy (`make walk-tg-login UPGRADE=1`: the upgrade, 25
+steps, then the path, 20 steps: the window opens from a reopened terminal and its frame has no `+r /home` pill).
+`make walk-tg-login` takes no screenshot any more: the volume holds the account; it checks two strips of the frame.
+`make test-tg-socket` checks the pill too, at both scales.
 
 ## The real login (the architect, by hand)
 
@@ -314,8 +341,8 @@ terminal forward (`tgl-term.png`). After the fixes `make test-tg-socket`, `make 
    with the Internet. `SCALE=2` asks for 2048x1536, which this screen cannot show whole.
 2. The api id and hash are already on the kept volume (typed in the first hand run). On a new volume, type
    `tgd --window` once without `&`: it asks for them and the OpenRouter key (Enter: none); then Ctrl-C.
-3. In the desktop's terminal: `tgd --window &`, then `tg &`. The window opens with the pill `+sock
-   /data/home/tgd/window.sock`. (Closing the first terminal is fine now: the new one can start tg too.)
+3. In the desktop's terminal: `tgd --window &`, then `tg &`. The window opens with the pills `+r /apps/tg` (its
+   package) and `+sock /data/home/tgd/window.sock`. (Closing the first terminal is fine now: the new one can start tg too.)
 4. In the window: the phone number (with the country's code), Next; the code; the password if the account has one
    (drawn as dots). The list comes.
 5. To check: open a chat, send a message, the summary (Settings: turn on AI summaries of the chat, then Summary),

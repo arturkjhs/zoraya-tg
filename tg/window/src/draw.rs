@@ -2,11 +2,12 @@
 //! cut to a width, and a text with its spans broken into lines. Everything is in
 //! physical pixels (logical times the scale's factor `k`), as the file manager draws.
 
+use alloc::borrow::Cow;
 use alloc::string::String;
 use alloc::vec::Vec;
 
 use zoraya_paint::{self as paint, Canvas};
-use zoraya_text::{Rect as TRect, Target, Text};
+use zoraya_text::{Rect as TRect, Source, Target, Text};
 use zoraya_tokens::{Color, CornerShape, Logical, Scale, shape};
 use zoraya_ui::Painter;
 
@@ -58,7 +59,78 @@ pub fn text(
         stride: c.width,
         clip: TRect::new(clip.x, clip.y, clip.w as u32, clip.h as u32),
     };
-    t.draw(&mut target, s, px, x, baseline, color)
+    t.draw(&mut target, &shown(t, s), px, x, baseline, color)
+}
+
+/// The advance of `s` at `px` as `text` draws it.
+pub fn measure(t: &mut Text<'static>, s: &str, px: u32) -> i32 {
+    let s = shown(t, s);
+    t.measure(&s, px)
+}
+
+/// What an emoji the fonts lack is drawn as, until the system has an emoji font
+/// (docs/requests.md, R27): the first of these the fonts have, a small mark that holds the
+/// emoji's place without the box that says the font is broken.
+const NEUTRAL: [char; 3] = ['\u{25E6}', '\u{2022}', '\u{00B7}'];
+
+/// An emoji or pictograph: what a missing glyph of these is drawn as `NEUTRAL`. Other
+/// characters the fonts lack (a script with no font) keep the box.
+fn pictograph(c: char) -> bool {
+    matches!(c as u32,
+        0x2100..=0x2BFF | 0x3030 | 0x303D | 0x3297 | 0x3299 | 0x1F000..=0x1FAFF)
+}
+
+/// A part of an emoji sequence that has no look of its own: the joiner, the variation
+/// selectors, the keycap, the skin tones and the tags of a subdivision's flag.
+fn joining(c: char) -> bool {
+    matches!(c as u32,
+        0x200D | 0xFE00..=0xFE0F | 0x20E3 | 0x1F3FB..=0x1F3FF | 0xE0020..=0xE007F)
+}
+
+/// `s` with each emoji sequence the fonts lack as one `NEUTRAL` mark: a sequence joined
+/// with U+200D, a pair of regional indicators (a flag), and the modifiers and selectors
+/// after it are one. What the fonts have is left as it is, and so is a string of ASCII.
+pub fn shown<'s>(t: &Text<'static>, s: &'s str) -> Cow<'s, str> {
+    if s.is_ascii() {
+        return Cow::Borrowed(s);
+    }
+    let lacks = |c: char| t.fonts.lookup(c).0 == Source::Box;
+    if !s.chars().any(|c| (pictograph(c) || joining(c)) && lacks(c)) {
+        return Cow::Borrowed(s);
+    }
+    let neutral = NEUTRAL.into_iter().find(|&c| !lacks(c)).unwrap_or('\u{00B7}');
+    let mut out = String::with_capacity(s.len());
+    // In a sequence drawn as the mark: after it, a joiner keeps it going and a regional
+    // indicator (the second of a pair) is part of it.
+    let mut open = false;
+    let mut joined = false;
+    let mut flag_half = false;
+    for c in s.chars() {
+        let regional = matches!(c as u32, 0x1F1E6..=0x1F1FF);
+        if joining(c) && lacks(c) {
+            if open && c == '\u{200D}' {
+                joined = true;
+            }
+            continue;
+        }
+        if pictograph(c) && lacks(c) {
+            let part = open && (joined || (regional && flag_half));
+            joined = false;
+            if part {
+                flag_half = false;
+                continue;
+            }
+            out.push(neutral);
+            open = true;
+            flag_half = regional;
+            continue;
+        }
+        open = false;
+        joined = false;
+        flag_half = false;
+        out.push(c);
+    }
+    Cow::Owned(out)
 }
 
 /// The side of the square a corner of `radius` takes, if `r` has room for four of them
@@ -165,15 +237,15 @@ pub fn stroke(
 
 /// `s`, or its start with an ellipsis, so that it is at most `max` pixels wide.
 pub fn fit(t: &mut Text<'static>, s: &str, px: u32, max: i32) -> String {
-    if t.measure(s, px) <= max {
+    if measure(t, s, px) <= max {
         return String::from(s);
     }
-    let dots = t.measure("…", px);
+    let dots = measure(t, "…", px);
     let mut out = String::new();
     let mut w = 0;
     for ch in s.chars() {
         let mut b = [0u8; 4];
-        let cw = t.measure(ch.encode_utf8(&mut b), px);
+        let cw = measure(t, ch.encode_utf8(&mut b), px);
         if w + cw + dots > max {
             break;
         }
@@ -359,7 +431,7 @@ pub fn wrap(
                 continue;
             }
             if ch == ' ' || ch == '\t' {
-                let sw = font(p, style).measure(" ", px);
+                let sw = measure(font(p, style), " ", px);
                 w.space = Some(w.cur.len());
                 w.push(Run {
                     a: at,
@@ -377,7 +449,7 @@ pub fn wrap(
             let mut word = (at, at + len);
             at += len;
             loop {
-                let ww = font(p, style).measure(&text[word.0..word.1], px);
+                let ww = measure(font(p, style), &text[word.0..word.1], px);
                 if w.w + ww <= w.max {
                     w.push(Run {
                         a: word.0,
@@ -397,7 +469,7 @@ pub fn wrap(
                 let mut cw = 0;
                 for (i, ch) in text[word.0..word.1].char_indices() {
                     let end = word.0 + i + ch.len_utf8();
-                    let now = font(p, style).measure(&text[word.0..end], px);
+                    let now = measure(font(p, style), &text[word.0..end], px);
                     if w.w + now > w.max && !(w.cur.is_empty() && cut == word.0) {
                         break;
                     }

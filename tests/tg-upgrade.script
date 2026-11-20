@@ -1,0 +1,31 @@
+# TG-04 stage B: a new tg on a kept volume (make tg-upgrade), without making the volume
+# again: tgd's own files (its api id and hash, TDLib's session) stay. On the console, which
+# holds the volume's root: fetch writes the new package's two files over /packages/tg from
+# the host (one guestfwd rule to a server of that directory only, @PORT@; the network is
+# restrict=on), install --keep replaces tg and keeps its saved grant, and its page then
+# lists only +sock. @KIB@ is the package's size, so a cut transfer is seen.
+! panicked
+! first process ended
+! not fetched
+! refused
+< Type help to begin, or help tour.
+< \r\n~>
+> fetch --output /packages/tg/tg http://10.0.2.50:@PORT@/tg\r
+limit 120 < \r\n~>
+> fetch --output /packages/tg/tg.cmd http://10.0.2.50:@PORT@/tg.cmd\r
+limit 60 < \r\n~>
+> install --keep /packages/tg\r
+limit 120 < tg (sha256 
+< 2 files, @KIB@ KiB, command tg
+< replaces tg (sha256 
+< kept the saved grants: 
+< tg installed with:
+<   /data/home/tgd/window.sock  connect to
+< \r\n~>
+> programs tg\r
+< saved grants:
+^ \r\n  +sock /data/home/tgd/window.sock  /data/home/tgd/window.sock  connect to (saved)
+^ \r\nrunning: none
+< \r\n~>
+x power off
+> poweroff\r

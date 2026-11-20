@@ -278,3 +278,46 @@ minimum size.
 
 **Until then.** zoraya-tg's `make run-tg-login` passes `--display-opts cocoa,left-command-key=on`.
 **Minimal test:** `make run-gui` on a 1920x1080 screen: the serial line says no `gpud: display 640x480`.
+
+## R27: an emoji font, flags and wide characters
+
+**What.** The system's fonts (`fonts/`, ADR-0326 item 5) have no emoji, so every emoji is drawn as the box: in titles,
+in messages, in the terminal. A text from another system carries many of them (a flag before a name, a smile at the
+end of a line), and a row of boxes reads as a broken font. Four parts:
+
+1. **The font.** Noto Emoji (the outline font, not the colour one), under OFL-1.1, unmodified and with its licence
+   text, in `fonts/` and so in `/system/fonts`, embedded by `zoraya-fonts` as the others are. A static TrueType
+   instance: `zoraya-text` reads `glyf` outlines and no variations.
+2. **Fallback through `zoraya-text`.** The emoji font last in every list before the box: `zoraya-ui`'s lists have
+   three fonts (the style's, Inter, JetBrains Mono) and `MAX_FONTS` is 4, so it fits; the terminal's list too.
+3. **Sequences.** The shaper takes an emoji sequence as one cluster: the zero-width joiner (U+200D), the variation
+   selectors (U+FE0E, U+FE0F), the skin tones (U+1F3FB to U+1F3FF), the keycap (U+20E3) and the tags of a
+   subdivision's flag (U+E0020 to U+E007F) are never drawn as boxes; a joined sequence the font has as one glyph is
+   that glyph, otherwise its first part. **A pair of regional indicators** (U+1F1E6 to U+1F1FF) is a flag: the
+   font's glyph for the pair when it has one (a `GSUB` ligature, which the simple shaper would have to read for these
+   pairs only), otherwise the two letters (`U` `A`) small in a frame, so that the country is still read; a lone
+   indicator is its letter in the frame.
+4. **Width.** An emoji is wide: two cells in the terminal's grid (the East Asian Wide property, as `wcwidth` gives
+   2), with the cursor and the line's length counted so; in a proportional layout, its advance from the font.
+
+**Until then.** zoraya-tg's window draws each emoji sequence its fonts lack (a flag's pair, a joined sequence with
+its modifiers and selectors) as one small neutral mark, the first of `◦` `•` `·` the fonts have, instead of a box per
+code point; a script with no font keeps the box (`tg/window/src/draw.rs`, `shown`).
+**Minimal test:** `zoraya-text` draws `"\u{1F600}"`, `"\u{1F1FA}\u{1F1E6}"`, `"\u{1F44D}\u{1F3FD}"` and
+`"\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}"` with no glyph from `Source::Box`; the flag is one glyph (or the
+framed letters), the family one glyph or its first; in the terminal, `echo` of a smile moves the cursor two cells.
+
+## R28: `cwd none` in an installed program's description
+
+**What.** Every program a shell starts is given its current directory, read only (ADR-0153 rule 1), unless its
+description says `cwd none`. An installed program's description may not say it (ADR-0396 item 5 refuses the key with
+the others that give authority), and the launch plans an installed program with the description of an undescribed
+POSIX program, whose `cwd` is `read`. So a window program that reads no file still shows `+r /home` among its pills,
+and holds it, when started from a terminal at home. `cwd none` only takes away; it should be allowed:
+`volume_key_problem` takes `cwd none` (still refusing `cwd read` and every other key), `for_volume` keeps it, and the
+launch (native and POSIX) plans with `cwd none` when the description checked with the program's bytes says so.
+
+**Until then.** `overlay/0003` does it for a native installed program (crates/zoraya-describe, crates/zoraya-settings'
+tests, `zosh`'s native launch); the POSIX path is not changed.
+**Minimal test:** install a package whose description says `cwd none`; from a terminal at home, `jobs` after
+`NAME &` shows no `~: read`, and its window has no `+r /home` pill. A description with `cwd read` is still refused.
