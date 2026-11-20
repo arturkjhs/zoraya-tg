@@ -866,7 +866,19 @@ impl Model {
     pub fn jump_newest(&mut self) {
         self.scroll = 0;
         self.anchor = None;
+        // A message chosen up there (by U) is out of view now: none is chosen.
+        self.msg_cursor = None;
+        self.msg_anchor = None;
         self.say(String::from("tg: newest"));
+    }
+
+    /// Up from the composer's first line: the newest message, the one just above it, is
+    /// chosen, wherever a message chosen before was (after U, a message far up).
+    pub fn up_from_composer(&mut self) {
+        self.msg_cursor = None;
+        self.msg_anchor = None;
+        self.msg_move(-1, false);
+        self.focus = Some(Role::Messages);
     }
 
     /// The keyboard's message moved by `delta` (with `extend`, the selection grows).

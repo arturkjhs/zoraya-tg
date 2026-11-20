@@ -1357,12 +1357,36 @@ fn the_position_and_a_jump_to_the_first_unread_message() {
     ui.paint();
     assert_eq!(ui.model.borrow().scroll, 0);
     assert!(ui.said("tg: newest"));
+    // And the message chosen up there is not chosen any more.
+    assert_eq!(ui.model.borrow().msg_cursor, None);
     // Sending something takes the line away, as tgclient's separator.
     ui.focus(Role::Composer);
     ui.type_text("seen");
     ui.key(keys::ENTER);
     assert_eq!(ui.model.borrow().last_read, None);
     assert_eq!(ui.model.borrow().first_unread(), None);
+    // Up from the composer chooses the newest message, the one just sent.
+    ui.key(keys::UP);
+    let m = ui.model.borrow();
+    assert_eq!(m.msg_cursor, Some(m.messages.len() - 1));
+    assert_eq!(m.messages[m.messages.len() - 1].row.text.text, "seen");
+}
+
+#[test]
+fn up_from_the_composer_chooses_the_newest_message_after_a_jump_up() {
+    // U chose a message far up; without End, Up from the composer still goes to the newest
+    // (the failed send just above it, in tests/tg-socket.script), not next to that one.
+    let mut ui = Ui::main();
+    ui.open("Book club");
+    ui.paint();
+    ui.focus(Role::Messages);
+    ui.key(key::U);
+    let first = ui.model.borrow().msg_cursor.expect("chosen");
+    assert!(first + 1 < ui.model.borrow().messages.len());
+    ui.focus(Role::Composer);
+    ui.key(keys::UP);
+    let m = ui.model.borrow();
+    assert_eq!(m.msg_cursor, Some(m.messages.len() - 1));
 }
 
 #[test]

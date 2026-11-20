@@ -339,6 +339,11 @@ tgd and the window start from a reopened terminal and the frame has no `+r /home
 deleted. `make walk-tg-login` takes no screenshot: the volume holds the account; it checks two strips of the frame.
 `make test-tg-socket` checks the pill too, at both scales.
 
+**A flaky retry, fixed (2026-11-20).** `make test-tg-socket` at scale 2 failed twice at the retry: after U (the first
+unread, chosen far up) and End, Up from the composer moved from that old choice instead of to the newest message, so
+Enter answered an old message instead of sending the failed one again. Up from the composer now chooses the newest
+message (the one just above it), and End lets go of the chosen one; a host test each.
+
 ## The real login (the architect, by hand)
 
 1. On the Mac mini, in `~/workspace/zoraya-tg`: `make run-tg-login`. It keeps the volume (`build/tgs/disk.img`, made

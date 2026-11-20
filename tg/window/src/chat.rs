@@ -1017,8 +1017,7 @@ impl Widget for Composer {
             keys::UP => {
                 // From the first line, Up goes to the messages.
                 if !self.vertical(&mut m, false) {
-                    m.msg_move(-1, false);
-                    m.focus = Some(Role::Messages);
+                    m.up_from_composer();
                 }
             }
             keys::DOWN => {
