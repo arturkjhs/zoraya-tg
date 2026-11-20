@@ -470,25 +470,37 @@ run-tg-login: tg-image $(STAGEB)/.stamp $(TGS_INSTALL)
 	@if [ -n "$(FRESH)" ] || [ ! -f $(TGS_DISK) ]; then ( $(call tgs_disk,$(TGS_DISK)) ) && ( $(call tgs_install,$(TGS_DISK)) ) || exit 1; fi
 	cd $(ZTGW) && tools/run-qemu.sh --gui --gui-scale $(or $(SCALE),1) --display-opts $(TGS_DISPLAY) --net --mem $(TGS_MEM) --disk $(TGS_DISK) --accel hvf build/zoraya-kernel.elf
 
-# A new tg on a kept volume, in place (tests/tg-upgrade.script): its two files fetched over
-# /packages/tg on a console boot from a host server of that one directory (127.0.0.1 only,
-# reached through one guestfwd rule; the guest's network is restrict=on), then
-# install --keep. tgd's files (the api id and hash, the session) are not touched. VOL is the
-# volume (default: the kept one).
+# New packages on a kept volume (tests/tg-upgrade.script): tg's two files and tgd's
+# description fetched over /packages on a console boot from a host server of those three
+# files (127.0.0.1 only, reached through one guestfwd rule; the guest's network is
+# restrict=on), then install of each (tgd with its whole line), checked against each package's identity
+# computed here. It runs on a copy of the volume, which replaces it only when every step
+# passed; otherwise the copy is deleted and the volume is as it was. So at most one volume
+# holds the login when it ends. tgd's files (the api id and hash, the session) are not
+# touched. VOL is the volume (default: the kept one).
 VOL ?= $(TGS_DISK)
 TGU := $(B)/tgu
-tgu_run = rm -rf $(TGU) && mkdir -p $(TGU)/www && cp $(STAGEB)/packages/tg/tg $(STAGEB)/packages/tg/tg.cmd $(TGU)/www/ && \
+# A package's identity as install prints it (ADR-0396 item 4): sha256 of the program and the
+# description, each after its length (8 bytes, little-endian); the first 8 hex digits.
+TGU_ID = python3 -c 'import hashlib, struct, sys; p, d = (open(f, "rb").read() for f in sys.argv[1:]); \
+	print(hashlib.sha256(struct.pack("<Q", len(p)) + p + struct.pack("<Q", len(d)) + d).hexdigest()[:8])'
+tgu_run = rm -rf $(TGU) && mkdir -p $(TGU)/www && \
+	  cp $(STAGEB)/packages/tg/tg $(STAGEB)/packages/tg/tg.cmd $(STAGEB)/packages/tgd/tgd.cmd $(TGU)/www/ && \
 	  (cd $(ZTGW) && cargo build -q -p zoraya-test-httpd) && \
 	  port=$$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])') && \
-	  kib=$$(( ($$(wc -c < $(TGU)/www/tg) + $$(wc -c < $(TGU)/www/tg.cmd) + 1023) / 1024 )) && \
-	  sed -e "s/@PORT@/$$port/g" -e "s/@KIB@/$$kib/g" tests/tg-upgrade.script > $(TGU)/raw.script && \
-	  python3 tests/expand_script.py $(TGU)/raw.script "" > $(TGU)/tg-upgrade.script && \
+	  tgh=$$($(TGU_ID) $(STAGEB)/packages/tg/tg $(STAGEB)/packages/tg/tg.cmd) && \
+	  tgdh=$$($(TGU_ID) $(STAGEB)/packages/tgd/tgd $(STAGEB)/packages/tgd/tgd.cmd) && \
+	  sed -e "s/@PORT@/$$port/g" -e "s/@TGHASH@/$$tgh/g" -e "s/@TGDHASH@/$$tgdh/g" tests/tg-upgrade.script > $(TGU)/raw.script && \
+	  python3 tests/expand_script.py $(TGU)/raw.script "$$(cd tgd && python3 -c 'from tgd import net; print(net.install_line())')" > $(TGU)/tg-upgrade.script && \
+	  cp $(1) $(TGU)/disk.img && cp $(1).key $(TGU)/disk.img.key && \
 	  { python3 -m http.server --bind 127.0.0.1 --directory $(TGU)/www $$port > $(TGU)/httpd.log 2>&1 & srv=$$!; \
-	  sleep 1; ( cd $(ZTGW) && target/debug/zoraya-test-runner --timeout 300 --script $(TGU)/tg-upgrade.script --label tg-upgrade -- \
+	  sleep 1; ( cd $(ZTGW) && target/debug/zoraya-test-runner --timeout 600 --script $(TGU)/tg-upgrade.script --label tg-upgrade -- \
 	    tools/run-qemu.sh --test --keys --net --net-guestfwd "10.0.2.50:$$port=$(ZTGW)/target/debug/zoraya-test-httpd --relay 127.0.0.1:$$port" \
-	    --mem $(TGS_MEM) --disk $(1) --accel hvf build/zoraya-kernel.elf ); rc=$$?; kill $$srv; \
-	  cp $(ZTGW)/target/test-logs/tg-upgrade.log $(LOGS)/tg-upgrade.log 2>/dev/null; [ $$rc = 0 ]; }
-tg-upgrade: tg-image $(STAGEB)/.stamp tests/tg-upgrade.script tests/expand_script.py
+	    --mem $(TGS_MEM) --disk $(TGU)/disk.img --accel hvf build/zoraya-kernel.elf ); rc=$$?; kill $$srv; \
+	  cp $(ZTGW)/target/test-logs/tg-upgrade.log $(LOGS)/tg-upgrade.log 2>/dev/null; \
+	  if [ $$rc = 0 ]; then mv $(TGU)/disk.img $(1) && mv $(TGU)/disk.img.key $(1).key && echo "tg-upgrade: $(1) upgraded"; \
+	  else rm -f $(TGU)/disk.img $(TGU)/disk.img.key; echo "tg-upgrade: failed; $(1) is as it was"; false; fi; }
+tg-upgrade: tg-image $(STAGEB)/.stamp tests/tg-upgrade.script tests/expand_script.py tgd/tgd/net.py tgd/tgd/telegram-cidr.txt
 	@[ -f $(VOL) ] || { echo "tg-upgrade: no volume $(VOL)"; exit 1; }
 	$(call tgu_run,$(VOL))
 

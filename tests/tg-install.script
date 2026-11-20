@@ -39,7 +39,14 @@ limit 300 < tgd installed with:
 ^ \r\n  +sock /data/home/tgd/window.sock  /data/home/tgd/window.sock  connect to (saved)
 ^ \r\nrunning: none
 < \r\n~>
+# Neither is given the current directory (cwd none, R28): grants shows no row for it.
 > grants tg\r
+< tg gets:
 < \r\n~>
+x current directory
+> grants tgd --window\r
+< tgd gets (a POSIX program):
+< \r\n~>
+x current directory
 x power off
 > poweroff\r

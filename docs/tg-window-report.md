@@ -322,16 +322,21 @@ The architect's login worked (the list, chats, Cyrillic, replies and links). Two
    description says `cwd none`, and an installed program's description could not say it (ADR-0396 item 5); the
    native launch planned it as an undescribed program, `cwd read`. tg reads no file, so it is not needed. Now
    `tg.cmd` says `cwd none`, and `overlay/0003` lets an installed description say it (only `none`: `cwd read` is
-   still refused) and the native launch keep it (R28). The frame's pills are `+r /apps/tg` (its package, which every
+   still refused) and the launch keep it (R28). tgd says `cwd none` too: it needs its own directory and the
+   network, not the current directory; `grants tg` and `grants tgd --window` show no row for it (checked in
+   `tests/tg-install.script` and `tests/tg-upgrade.script`). The frame's pills are `+r /apps/tg` (its package, which every
    installed program is given: ADR-0397 item 5) and `+sock /data/home/tgd/window.sock`.
 
-**The kept volume, upgraded in place.** It holds the login, so it is not made again: `make tg-upgrade` boots it on the
-console with a network that reaches one host server only (127.0.0.1, serving the new package's two files through a
-guestfwd rule; restrict=on), `fetch`es `tg` and `tg.cmd` over `/packages/tg`, and runs `install --keep /packages/tg`,
-which replaces tg and keeps its saved `+sock`; `programs tg` then lists only `+sock`. tgd and its files (the api id
-and hash, TDLib's session) are not touched. Tried first on a copy (`make walk-tg-login UPGRADE=1`: the upgrade, 25
-steps, then the path, 20 steps: the window opens from a reopened terminal and its frame has no `+r /home` pill).
-`make walk-tg-login` takes no screenshot any more: the volume holds the account; it checks two strips of the frame.
+**The kept volume, upgraded in place.** It holds the login, so it is not made again, and at most one volume holds
+the login: `make tg-upgrade` works on a copy (`build/tgu/`) and moves it over the volume only when every step
+passed; otherwise it deletes the copy and the volume is as it was. On the copy it boots the console with a network
+that reaches one host server only (127.0.0.1, serving tg's two files and tgd's description through a guestfwd rule;
+restrict=on), `fetch`es them over `/packages`, installs tg with `--keep` (its `+sock`) and tgd with its whole
+install line, and checks each package's identity (the hash install prints, computed on the host), each page row for
+row, and `grants` of both with no current directory. tgd's files (the api id and hash, TDLib's session) are not
+touched. Tried on a copy first (`make walk-tg-login UPGRADE=1`: the upgrade, 68 steps, then the path, 20 steps:
+tgd and the window start from a reopened terminal and the frame has no `+r /home` pill); the walk's copies are
+deleted. `make walk-tg-login` takes no screenshot: the volume holds the account; it checks two strips of the frame.
 `make test-tg-socket` checks the pill too, at both scales.
 
 ## The real login (the architect, by hand)

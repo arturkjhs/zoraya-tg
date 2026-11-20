@@ -1,12 +1,18 @@
-# TG-04 stage B: a new tg on a kept volume (make tg-upgrade), without making the volume
-# again: tgd's own files (its api id and hash, TDLib's session) stay. On the console, which
-# holds the volume's root: fetch writes the new package's two files over /packages/tg from
-# the host (one guestfwd rule to a server of that directory only, @PORT@; the network is
-# restrict=on), install --keep replaces tg and keeps its saved grant, and its page then
-# lists only +sock. @KIB@ is the package's size, so a cut transfer is seen.
+# TG-04 stage B: new packages on a kept volume (make tg-upgrade), without making the volume
+# again, so tgd's own files (its api id and hash, TDLib's session) stay. Run on a copy of
+# the volume, which replaces it only when every step passed. On the console, which holds
+# the volume's root: fetch writes the new tg (its program and description) and tgd's new
+# description over /packages from the host (one guestfwd rule to a server of those three
+# files only, @PORT@; the network is restrict=on); tgd's program is the one already there.
+# install replaces each (tg with --keep, its one saved word). @TGHASH@ and @TGDHASH@ are each
+# package's identity as install prints it, computed on the host from the files that should
+# be installed: a cut transfer or another tgd program on the volume fails here. Then each
+# page lists exactly its saved grants, and grants shows no current directory (cwd none).
+# tgd is installed again with its whole line (@GRANT@, tgd --install-line, as tg-install
+# does), not with --keep, which puts the kept words back in the reverse order: so its page
+# is the same, row for row, after every upgrade. tg has one word, kept.
 ! panicked
 ! first process ended
-! not fetched
 ! refused
 < Type help to begin, or help tour.
 < \r\n~>
@@ -14,18 +20,52 @@
 limit 120 < \r\n~>
 > fetch --output /packages/tg/tg.cmd http://10.0.2.50:@PORT@/tg.cmd\r
 limit 60 < \r\n~>
+> fetch --output /packages/tgd/tgd.cmd http://10.0.2.50:@PORT@/tgd.cmd\r
+limit 60 < \r\n~>
 > install --keep /packages/tg\r
-limit 120 < tg (sha256 
-< 2 files, @KIB@ KiB, command tg
+limit 120 < tg (sha256 @TGHASH@): 2 files
 < replaces tg (sha256 
 < kept the saved grants: 
 < tg installed with:
 <   /data/home/tgd/window.sock  connect to
 < \r\n~>
+> @GRANT@\r
+limit 300 < tgd (sha256 @TGDHASH@): 2 files
+< replaces tgd (sha256 
+< dropped the saved grants of the old package: 
+< tgd installed with:
+<   ~/.config/tgd  its own files
+<   net: openrouter.ai:443  reach
+< \r\n~>
+> programs tgd\r
+< tgd is an installed program, /apps/tgd/tgd (sha256 @TGDHASH@)
+< saved grants:
+^ \r\n  +own ~/.config/tgd  ~/.config/tgd  its own files (saved)
+^ \r\n  +net 91.108.56.0/22:443  net: 91.108.56.0/22:443  reach (saved)
+^ \r\n  +net 91.108.4.0/22:443  net: 91.108.4.0/22:443  reach (saved)
+^ \r\n  +net 91.108.8.0/22:443  net: 91.108.8.0/22:443  reach (saved)
+^ \r\n  +net 91.108.16.0/22:443  net: 91.108.16.0/22:443  reach (saved)
+^ \r\n  +net 91.108.12.0/22:443  net: 91.108.12.0/22:443  reach (saved)
+^ \r\n  +net 149.154.160.0/20:443  net: 149.154.160.0/20:443  reach (saved)
+^ \r\n  +net 91.105.192.0/23:443  net: 91.105.192.0/23:443  reach (saved)
+^ \r\n  +net 91.108.20.0/22:443  net: 91.108.20.0/22:443  reach (saved)
+^ \r\n  +net 185.76.151.0/24:443  net: 185.76.151.0/24:443  reach (saved)
+^ \r\n  +net openrouter.ai:443  net: openrouter.ai:443  reach (saved)
+^ \r\nrunning: none
+< \r\n~>
 > programs tg\r
+< tg is an installed program, /apps/tg/tg (sha256 @TGHASH@)
 < saved grants:
 ^ \r\n  +sock /data/home/tgd/window.sock  /data/home/tgd/window.sock  connect to (saved)
 ^ \r\nrunning: none
 < \r\n~>
+> grants tg\r
+< tg gets:
+< \r\n~>
+x current directory
+> grants tgd --window\r
+< tgd gets (a POSIX program):
+< \r\n~>
+x current directory
 x power off
 > poweroff\r

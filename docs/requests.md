@@ -317,7 +317,11 @@ and holds it, when started from a terminal at home. `cwd none` only takes away; 
 `volume_key_problem` takes `cwd none` (still refusing `cwd read` and every other key), `for_volume` keeps it, and the
 launch (native and POSIX) plans with `cwd none` when the description checked with the program's bytes says so.
 
-**Until then.** `overlay/0003` does it for a native installed program (crates/zoraya-describe, crates/zoraya-settings'
-tests, `zosh`'s native launch); the POSIX path is not changed.
+**Until then.** `overlay/0003` does it (crates/zoraya-describe, crates/zoraya-settings' tests, and in `zosh` one
+`undescribed_for` used by the native launch, the POSIX launch and `grants`).
+
+A small thing seen beside it: `install --keep` puts the kept words back in the reverse order (each `insert(0, ...)`),
+so a program's page lists its grants turned round after each upgrade. Appending them in order would keep the page as
+it was.
 **Minimal test:** install a package whose description says `cwd none`; from a terminal at home, `jobs` after
 `NAME &` shows no `~: read`, and its window has no `+r /home` pill. A description with `cwd read` is still refused.

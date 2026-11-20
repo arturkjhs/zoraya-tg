@@ -40,6 +40,9 @@ no longer touch the kept volume. **Ready again for the architect's login.**
 2026-11-20: the architect's real login worked. Emoji were boxes: request R27 (an emoji font, flags, wide
 characters), and until then the window draws an emoji its fonts lack as one small neutral mark. The frame's
 `+r /home` was the launch's current directory (installed descriptions could not say `cwd none`): `tg.cmd` says it now,
-overlay 0003 lets it count (R28), and `programs tg` lists only `+sock`. The kept volume was upgraded in place
-(`make tg-upgrade`: tg only, tgd's files and the login untouched).
+overlay 0003 lets it count (R28), and `programs tg` lists only `+sock`. tgd says `cwd none` too; `grants` of
+both shows no current directory. `make tg-upgrade` puts the new packages on the kept volume through a copy that
+replaces it only when every step passed (at most one volume holds the login). **Waiting for the architect** to
+run `make tg-upgrade` on the kept volume and confirm; then `build/tgs/disk.img.before-upgrade` (a second copy of
+the session) is deleted.
 

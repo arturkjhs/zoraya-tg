@@ -172,7 +172,7 @@ index 2c6e1f6c..d828989c 100644
  
  #[test]
 diff --git a/user/src/bin/zosh.rs b/user/src/bin/zosh.rs
-index 1109983a..9544d521 100644
+index 1109983a..7d589945 100644
 --- a/user/src/bin/zosh.rs
 +++ b/user/src/bin/zosh.rs
 @@ -484,8 +484,14 @@ enum Escape {
@@ -225,24 +225,12 @@ index 1109983a..9544d521 100644
              Err(s) => {
                  if let Some(t) = table {
                      let _ = handle_close(t.startup);
-@@ -1829,23 +1849,52 @@ impl Z {
+@@ -1829,23 +1849,40 @@ impl Z {
                  }
              }
          }
 -        let undescribed = zoraya_describe::parse(UNDESCRIBED.as_bytes()).map_err(|_| fail("?"))?;
-+        let mut undescribed = zoraya_describe::parse(UNDESCRIBED.as_bytes()).map_err(|_| fail("?"))?;
-+        // An installed program whose description says `cwd none` is not given the current
-+        // directory (local overlay): the one key of its description that counts at the
-+        // launch, and it only takes away. The description is the one just checked with the
-+        // program's bytes.
-+        if installed.is_some()
-+            && self
-+                .installed_cache
-+                .get(exec.name)
-+                .is_some_and(|(_, d)| d.cwd == zoraya_describe::Cwd::None)
-+        {
-+            undescribed.cwd = zoraya_describe::Cwd::None;
-+        }
++        let undescribed = self.undescribed_for(exec.name).ok_or_else(|| fail("?"))?;
          if native {
              let mut plan = self.plan_with(exec, &undescribed, false);
              if let Ok(p) = &mut plan {
@@ -279,7 +267,7 @@ index 1109983a..9544d521 100644
                      Err(e)
                  }
              };
-@@ -2097,6 +2146,61 @@ impl Z {
+@@ -2097,6 +2134,61 @@ impl Z {
              .map_err(|why| zoraya_command::error("zosh", Some(exec.name), &why, &[]))
      }
  
@@ -341,7 +329,42 @@ index 1109983a..9544d521 100644
      /// The own directory the line gives a POSIX program (ADR-0341): from the
      /// image's description that names `path` and no other, in the room the
      /// line runs in. A line that sets `HOME`, or names the directory in a
-@@ -3037,9 +3141,22 @@ impl Z {
+@@ -2229,6 +2321,22 @@ impl Z {
+         .map_err(fail)
+     }
+ 
++    /// The description a program without one of the image's is planned with: the current
++    /// directory and the line's grants. An installed program whose description, checked
++    /// with its files, says `cwd none` is not given the current directory (local overlay,
++    /// R28): the one key of its description that counts at a launch, and it only takes away.
++    fn undescribed_for(&mut self, name: &str) -> Option<Description> {
++        let mut d = zoraya_describe::parse(UNDESCRIBED.as_bytes()).ok()?;
++        if self.installed_now.contains_key(name)
++            && self
++                .installed_description(name)
++                .is_some_and(|i| i.cwd == zoraya_describe::Cwd::None)
++        {
++            d.cwd = zoraya_describe::Cwd::None;
++        }
++        Some(d)
++    }
++
+     /// A POSIX program's plan: by the description of the system image's
+     /// that names `path` (INV-0153-6), or the current directory and the
+     /// line's grants alone.
+@@ -2255,8 +2363,9 @@ impl Z {
+                 Ok(plan)
+             }
+             None => {
+-                let undescribed = zoraya_describe::parse(UNDESCRIBED.as_bytes())
+-                    .map_err(|_| String::from("zosh: a description of its own is refused\n"))?;
++                let undescribed = self
++                    .undescribed_for(exec.name)
++                    .ok_or_else(|| String::from("zosh: a description of its own is refused\n"))?;
+                 let mut plan = self.plan_with(exec, &undescribed, false)?;
+                 // An installed program: its package and the saved words, as if
+                 // typed before the command (ADR-0397 item 5).
+@@ -3037,9 +3146,22 @@ impl Z {
          exec: &Exec<'_>,
          startup: Option<Handle>,
          streams: [Handle; 3],
@@ -364,7 +387,18 @@ index 1109983a..9544d521 100644
          let volume = if NEED_VOLUME.contains(&exec.name) {
              self.root
                  .as_ref()
-@@ -6264,8 +6381,12 @@ impl Host for Z {
+@@ -5622,8 +5744,8 @@ impl Z {
+                     })
+             });
+             let plan = if native {
+-                zoraya_describe::parse(UNDESCRIBED.as_bytes())
+-                    .map_err(|_| String::from("zosh: a description of its own is refused\n"))
++                self.undescribed_for(name)
++                    .ok_or_else(|| String::from("zosh: a description of its own is refused\n"))
+                     .and_then(|d| self.plan_with(exec, &d, false))
+             } else {
+                 self.posix_plan(exec, &path)
+@@ -6264,8 +6386,12 @@ impl Host for Z {
          };
          if let Ok((streams, term_out)) = &streams {
              for ((exec, r), (ends, tty)) in pipe.programs.iter().zip(ready).zip(streams) {
@@ -379,7 +413,7 @@ index 1109983a..9544d521 100644
                      Ready::Posix {
                          image,
                          exe,
-@@ -6397,7 +6518,7 @@ impl Host for Z {
+@@ -6397,7 +6523,7 @@ impl Host for Z {
                  let started = match own {
                      Ok(own) => {
                          native.push(own);
